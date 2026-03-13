@@ -66,10 +66,11 @@ def classify_product_type(product_type: str) -> str:
     pt = product_type.lower()
     if any(kw in pt for kw in ("marketing", "landing", "brochure", "portfolio")):
         return "marketing_site"
-    if any(kw in pt for kw in ("saas", "dashboard", "app", "platform", "tool")):
-        return "saas_app"
+    # Check mobile before saas — "mobile web app" should be mobile, not saas
     if any(kw in pt for kw in ("mobile",)):
         return "mobile_web"
+    if any(kw in pt for kw in ("saas", "dashboard", "app", "platform", "tool")):
+        return "saas_app"
     return "default"
 
 
