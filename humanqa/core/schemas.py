@@ -146,6 +146,53 @@ class AgentPersona(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Actions (deterministic interaction engine)
+# ---------------------------------------------------------------------------
+
+class Action(BaseModel):
+    """A single deterministic browser action planned by the LLM."""
+    type: str  # navigate, click, fill_form, search, scroll, wait_for, screenshot, go_back
+    target: str = ""  # accessibility label, URL, or field name
+    value: str | None = None  # For fill_form/search: the text to enter
+    reason: str = ""  # Why the persona is doing this
+
+
+# ---------------------------------------------------------------------------
+# Page Snapshot
+# ---------------------------------------------------------------------------
+
+class PageSnapshot(BaseModel):
+    """Structured capture of a page state at a point in time."""
+    url: str = ""
+    title: str = ""
+    accessibility_tree: str = ""  # Serialized accessibility tree
+    screenshot_base64: str = ""  # Base64-encoded screenshot PNG
+    screenshot_path: str = ""  # Path to saved screenshot file
+    console_errors: list[str] = Field(default_factory=list)
+    network_error_count: int = 0
+    load_time_ms: int = 0
+    lcp_ms: float | None = None  # Largest Contentful Paint
+    cls_score: float | None = None  # Cumulative Layout Shift
+    page_text: str = ""  # Visible text content (fallback when a11y tree unavailable)
+
+
+# ---------------------------------------------------------------------------
+# Journey Step
+# ---------------------------------------------------------------------------
+
+class JourneyStep(BaseModel):
+    """One step in a multi-step journey execution."""
+    step_number: int
+    action: Action
+    snapshot_before: PageSnapshot | None = None
+    snapshot_after: PageSnapshot | None = None
+    screenshot_path: str = ""
+    issues_found: list[str] = Field(default_factory=list)  # Issue IDs
+    persona_reaction: str = ""
+    confidence_level: float = 0.5
+
+
+# ---------------------------------------------------------------------------
 # Evidence
 # ---------------------------------------------------------------------------
 
