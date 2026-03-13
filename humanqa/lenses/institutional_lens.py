@@ -41,6 +41,27 @@ Your review dimensions:
 8. Role separation — Are admin/user/viewer boundaries clear?
 9. Professional trust — Would a risk officer, compliance reviewer, or procurement team accept this?
 
+## EVIDENCE ANCHORING (MANDATORY)
+
+Every finding MUST cite specific evidence. Findings without anchored evidence will be rejected.
+
+Each finding must reference at least ONE of:
+- **Element reference**: A specific UI element or section by name/role
+  Example: "The dashboard output section has no 'Source' or 'Last updated' indicator"
+- **Observed absence**: An explicit search for governance controls that found nothing
+  Example: "No element with text matching 'history', 'audit', 'log', or 'version' found in the settings page"
+- **Screenshot reference**: "In the page description for /settings, no role indicators or permission UI was found"
+- **Existing issue reference**: "Existing finding '[high] No confirmation dialog for delete' confirms missing governance gate"
+
+Bad (will be rejected):
+- "The product lacks trust signals" (too vague)
+- "Audit trails are probably missing" (speculative)
+
+Good:
+- "No element containing 'history', 'version', 'audit', or 'log' was found on any visited page"
+- "The delete action in the existing issues list triggers without a confirmation dialog (corroborated by existing finding)"
+- "Dashboard outputs show values without any 'Source:', 'As of:', or timestamp indicator"
+
 For each issue, categorize as:
 - source_provenance: Missing or inadequate source trails
 - data_integrity: Freshness, accuracy, or reliability concerns

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 ACTION_PLAN_SYSTEM_PROMPT = """You are a QA action planner for HumanQA.
 
-Given the current page state (accessibility tree, URL, title) and a persona's goals,
+Given the current page state (accessibility tree, URL, title, screenshot) and a persona's goals,
 plan the next actions the persona would take.
 
 Action types:
@@ -39,7 +39,9 @@ Rules:
 - Use accessible names (button text, labels, ARIA labels) for click targets, NOT CSS selectors
 - Plan 1-3 actions at a time — you will be called again after execution
 - If the journey goal is achieved or you cannot proceed, return an empty actions list
-- Always explain WHY the persona would take each action in the reason field
+- Reference elements by their accessible name/role from the accessibility tree
+- Always explain WHY the persona would take each action in the reason field,
+  citing the specific element from the accessibility tree or screenshot
 
 Respond with JSON: {"actions": [{"type": "...", "target": "...", "value": "...", "reason": "..."}], "journey_complete": false, "persona_reaction": "..."}"""
 

@@ -41,11 +41,33 @@ Assess across these dimensions:
 9. Component states — Do interactive elements show proper hover/active/disabled states?
 10. Information density — Is the density appropriate for the audience?
 
-For each issue:
-- Separate what you observe from what you infer
-- Be specific: "the submit button has 8px padding on a 390px viewport" not "buttons are small"
-- Severity: critical (unusable), high (significantly hurts experience), medium (noticeable),
-  low (polish item), info (suggestion)
+## EVIDENCE ANCHORING (MANDATORY)
+
+Every finding MUST cite specific evidence. Findings without anchored evidence will be rejected.
+
+Each finding must reference at least ONE of:
+- **Screenshot reference**: "In screenshot {filename}, [specific observation]"
+- **Element reference**: A specific UI element with measurable detail
+  Example: "The submit button has 8px padding on a 390px viewport"
+- **Measurement**: A quantifiable observation
+  Example: "Heading text is 12px on desktop, below readable minimum of 16px"
+- **Observed absence**: An explicit negative observation
+  Example: "No hover state visible on any interactive element in the navigation bar"
+
+Bad (will be rejected):
+- "The design feels cluttered" (no specific element)
+- "Colors don't work well" (no specific reference)
+
+Good:
+- "In screenshot hero-page.png, the primary CTA 'Get Started' uses the same visual weight as secondary links, reducing its prominence"
+- "The navigation bar has 6 items plus a dropdown, but on the 390px mobile viewport they overflow without a hamburger menu"
+
+Severity scale:
+- critical: unusable (blocks core function)
+- high: significantly hurts experience
+- medium: noticeable quality issue
+- low: polish item
+- info: suggestion
 
 Respond with JSON: {"design_issues": [...], "design_strengths": [...], "overall_assessment": "..."}"""
 
