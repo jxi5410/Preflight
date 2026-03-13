@@ -1,0 +1,34 @@
+# HumanQA Configuration Example
+# Copy to humanqa.yaml and customize
+
+target:
+  url: https://your-product.com
+  # mobile_target: com.yourapp.package  # For native mobile testing
+  credentials:
+    email: test@example.com
+    password: test123
+
+options:
+  brief: "Brief description of what your product does"
+  focus_flows:
+    - onboarding
+    - search
+    - checkout
+  persona_hints:
+    - "enterprise finance users"
+    - "mobile-first consumers"
+  institutional_review: auto  # auto | on | off
+  design_review: true
+  # design_guidance: "Uses Tailwind, follows Material Design"
+
+llm:
+  provider: anthropic  # anthropic | openai
+  model: claude-sonnet-4-20250514
+  # api_key_env: ANTHROPIC_API_KEY
+
+output:
+  dir: ./artifacts
+  # formats: [markdown, json, repair_briefs]
+
+schedule:
+  # cron: "0 2 * * *"  # 2 AM daily

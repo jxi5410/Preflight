@@ -6,7 +6,7 @@ All structured data models: product intent, personas, issues, evidence, reports.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -187,7 +187,7 @@ class CoverageMap(BaseModel):
 class RunResult(BaseModel):
     """Complete output of a single evaluation run."""
     run_id: str = Field(default_factory=lambda: f"run-{uuid.uuid4().hex[:8]}")
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     completed_at: datetime | None = None
     config: RunConfig
     intent_model: ProductIntentModel = Field(default_factory=ProductIntentModel)
