@@ -1,94 +1,111 @@
 """Web Runner — Playwright-based external UI evaluation.
 
-Evaluates a product strictly through browser interaction. No code inspection.
-Captures screenshots, timing, console errors, and network issues.
+Evaluates a product through real browser interaction using:
+- Accessibility tree snapshots for semantic page understanding
+- Vision-based evaluation (screenshots sent to LLM)
+- Deterministic action execution (LLM plans, Playwright executes)
+- Multi-step journey execution with plan-execute-judge-adapt loop
 """
 
 from __future__ import annotations
 
-import asyncio
+import base64
 import logging
-import os
 import time
 from pathlib import Path
 
-from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright.async_api import async_playwright, Page, BrowserContext
 
+from humanqa.core.actions import (
+    ACTION_PLAN_PROMPT_TEMPLATE,
+    ACTION_PLAN_SYSTEM_PROMPT,
+    execute_action,
+)
 from humanqa.core.llm import LLMClient
 from humanqa.core.schemas import (
+    Action,
     AgentPersona,
     CoverageEntry,
     CoverageMap,
     Evidence,
     Issue,
     IssueCategory,
+    JourneyStep,
+    PageSnapshot,
     Platform,
     RunConfig,
     Severity,
 )
+from humanqa.runners.page_snapshot import capture_snapshot, snapshot_to_prompt_context
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
 
 EVALUATION_SYSTEM_PROMPT = """You are a QA evaluation agent for HumanQA. You are acting as a specific user persona
 interacting with a product through its UI.
 
+You will receive:
+- A screenshot of the current page (as an image)
+- The accessibility tree (semantic page structure)
+- Performance metrics and console errors
+- Your persona details and journey context
+
 Your job:
-1. Look at the screenshot and page content provided
-2. Evaluate what you see from your persona's perspective
-3. Identify issues across: functional, UX, UI, performance, trust, design
-4. Apply common-sense judgment — not just mechanical checks
-5. Separate observed facts from inferred judgments from hypotheses
+1. Evaluate what you see from your persona's perspective
+2. Identify real issues with specific evidence
+3. Separate observed facts from inferred judgments
+4. Every finding MUST cite specific evidence:
+   - Element by accessible name/role from the accessibility tree
+   - Measurement (load time, element count, etc.)
+   - Or observed absence ("no element with role X was found")
 
 For each issue found, provide:
 - title: Clear issue title
 - severity: critical | high | medium | low | info
 - confidence: 0.0-1.0
-- category: functional | ux | ui | performance | trust | design
+- category: functional | ux | ui | performance | trust | design | accessibility
 - user_impact: How this affects a real user
-- observed_facts: What you literally see (list)
-- inferred_judgment: What you conclude from what you see
+- observed_facts: What you literally see/measure (list)
+- inferred_judgment: What you conclude from the evidence
 - hypotheses: Possible explanations (list)
 - likely_product_area: Where in the product this lives
 - repair_brief: What a developer should fix
+- evidence_ref: Screenshot step reference (e.g. "step-3")
 
-Common-sense questions to ask yourself:
-- Is the next step obvious?
-- Does this behave as expected?
-- Would a user trust this?
-- Would a user give up here?
-- Is the copy confusing?
-- Does this feel broken even without a visible error?
+Findings without specific evidence will be rejected.
 
-Respond with a JSON object: {"issues": [...], "observations": "...", "next_actions": [...]}"""
+Respond with JSON: {"issues": [...], "persona_reaction": "...", "confidence_level": 0.0-1.0}"""
 
-EVALUATION_PROMPT_TEMPLATE = """You are: {persona_name} — {persona_role}
+EVALUATION_PROMPT_TEMPLATE = """## Persona
+Name: {persona_name} | Role: {persona_role}
 Goals: {persona_goals}
 Patience: {patience_level} | Expertise: {expertise_level}
 Style: {behavioral_style}
 
-Current journey: {journey}
-Current URL: {url}
-Page title: {title}
+## Journey: {journey}
+## Step {step_number} of max {max_steps}
 
-## Visible page text (truncated)
-{page_text}
+## Current Page State
+{page_context}
 
-## Console errors (if any)
-{console_errors}
+## Action Just Taken
+{action_description}
 
-## Performance
-- Page load time: {load_time_ms}ms
-- Network requests: {request_count}
-
-## Previous actions taken
+## Previous Actions
 {previous_actions}
 
-Evaluate this page from your persona's perspective. Find issues.
-Respond with JSON: {{"issues": [...], "observations": "brief notes", "next_actions": ["click X", "navigate to Y"]}}"""
+Evaluate this page from your persona's perspective. The screenshot is attached as an image.
+Find issues with specific evidence. Respond with JSON."""
+
+# Default max steps per journey
+DEFAULT_MAX_STEPS = 10
 
 
 class WebRunner:
-    """Runs web-based evaluation using Playwright."""
+    """Runs web-based evaluation using Playwright with vision + a11y + deterministic actions."""
 
     def __init__(self, llm: LLMClient, output_dir: str = "./artifacts"):
         self.llm = llm
@@ -101,9 +118,10 @@ class WebRunner:
         persona: AgentPersona,
         journeys: list[str],
         coverage: CoverageMap,
+        max_steps: int = DEFAULT_MAX_STEPS,
     ) -> tuple[list[Issue], CoverageMap]:
         """Run evaluation for a single persona across assigned journeys."""
-        issues: list[Issue] = []
+        all_issues: list[Issue] = []
 
         async with async_playwright() as p:
             # Choose viewport based on persona device preference
@@ -123,6 +141,16 @@ class WebRunner:
                 viewport=viewport,
                 user_agent=user_agent,
             )
+
+            # Enable performance observer for LCP/CLS
+            await context.add_init_script("""
+                window.__humanqa_perf = {errors: [], networkErrors: 0};
+                if (typeof PerformanceObserver !== 'undefined') {
+                    new PerformanceObserver((list) => {}).observe({type: 'largest-contentful-paint', buffered: true});
+                    new PerformanceObserver((list) => {}).observe({type: 'layout-shift', buffered: true});
+                }
+            """)
+
             page = await context.new_page()
 
             # Collect console errors
@@ -132,34 +160,47 @@ class WebRunner:
                 if msg.type in ("error", "warning") else None
             ))
 
-            # Track network requests
-            request_count = 0
-            page.on("request", lambda _: None)  # counting handled below
+            # Track network errors
+            network_error_count = 0
+
+            def on_response(response):
+                nonlocal network_error_count
+                if response.status >= 400:
+                    network_error_count += 1
+
+            page.on("response", on_response)
 
             try:
                 # Navigate to target
                 start = time.monotonic()
-                await page.goto(config.target_url, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(
+                    config.target_url,
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
                 load_time_ms = int((time.monotonic() - start) * 1000)
 
                 # Handle credentials if provided
                 if config.credentials:
                     await self._attempt_login(page, config)
 
-                # Evaluate each journey
-                previous_actions: list[str] = [f"Navigated to {config.target_url}"]
-
+                # Execute each journey with multi-step loop
                 for journey in journeys:
-                    journey_issues = await self._evaluate_page(
+                    logger.info(
+                        "  Agent %s starting journey: %s",
+                        persona.name, journey,
+                    )
+                    journey_issues, steps = await self._execute_journey(
                         page=page,
                         persona=persona,
                         journey=journey,
                         config=config,
                         console_errors=console_errors,
-                        load_time_ms=load_time_ms,
-                        previous_actions=previous_actions,
+                        network_error_count=network_error_count,
+                        initial_load_time_ms=load_time_ms,
+                        max_steps=max_steps,
                     )
-                    issues.extend(journey_issues)
+                    all_issues.extend(journey_issues)
 
                     coverage.entries.append(CoverageEntry(
                         url=page.url,
@@ -170,24 +211,25 @@ class WebRunner:
                         issues_found=len(journey_issues),
                     ))
 
-                    # Follow suggested next actions for deeper exploration
-                    # (limited to 3 navigation steps per journey to avoid infinite loops)
-                    for step in range(3):
-                        step_issues = await self._explore_next(
-                            page=page,
-                            persona=persona,
-                            journey=journey,
-                            config=config,
-                            console_errors=console_errors,
-                            previous_actions=previous_actions,
-                        )
-                        if not step_issues and step > 0:
-                            break
-                        issues.extend(step_issues)
+                    logger.info(
+                        "  Journey '%s' complete: %d steps, %d issues",
+                        journey, len(steps), len(journey_issues),
+                    )
+
+                    # Navigate back to start for next journey
+                    if len(journeys) > 1:
+                        try:
+                            await page.goto(
+                                config.target_url,
+                                wait_until="domcontentloaded",
+                                timeout=15000,
+                            )
+                        except Exception:
+                            pass
 
             except Exception as e:
                 logger.error("Web evaluation failed for %s: %s", persona.name, e)
-                issues.append(Issue(
+                all_issues.append(Issue(
                     title=f"Evaluation blocked: {str(e)[:100]}",
                     severity=Severity.critical,
                     category=IssueCategory.functional,
@@ -199,7 +241,271 @@ class WebRunner:
             finally:
                 await browser.close()
 
-        return issues, coverage
+        return all_issues, coverage
+
+    async def _execute_journey(
+        self,
+        page: Page,
+        persona: AgentPersona,
+        journey: str,
+        config: RunConfig,
+        console_errors: list[str],
+        network_error_count: int,
+        initial_load_time_ms: int,
+        max_steps: int,
+    ) -> tuple[list[Issue], list[JourneyStep]]:
+        """Execute a multi-step journey using plan-execute-judge-adapt loop."""
+        issues: list[Issue] = []
+        steps: list[JourneyStep] = []
+        previous_actions: list[str] = [f"Navigated to {config.target_url}"]
+
+        for step_num in range(1, max_steps + 1):
+            # 1. CAPTURE: Take a snapshot of the current page
+            snapshot = await capture_snapshot(
+                page=page,
+                output_dir=self.output_dir,
+                snapshot_name=f"{persona.id}-{journey[:20]}-step{step_num:02d}",
+                console_errors=console_errors,
+                network_error_count=network_error_count,
+                load_time_ms=initial_load_time_ms if step_num == 1 else 0,
+            )
+
+            # 2. PLAN: Ask LLM to plan next action(s)
+            plan = await self._plan_actions(
+                snapshot=snapshot,
+                persona=persona,
+                journey=journey,
+                step_number=step_num,
+                max_steps=max_steps,
+                previous_actions=previous_actions,
+            )
+
+            actions = plan.get("actions", [])
+            journey_complete = plan.get("journey_complete", False)
+
+            if journey_complete or not actions:
+                # Journey is done — do one final evaluation
+                step_issues = await self._judge_snapshot(
+                    snapshot=snapshot,
+                    persona=persona,
+                    journey=journey,
+                    step_number=step_num,
+                    max_steps=max_steps,
+                    action_description="Journey complete — final evaluation",
+                    previous_actions=previous_actions,
+                )
+                issues.extend(step_issues)
+                steps.append(JourneyStep(
+                    step_number=step_num,
+                    action=Action(type="screenshot", reason="Final evaluation"),
+                    snapshot_before=None,
+                    snapshot_after=snapshot,
+                    screenshot_path=snapshot.screenshot_path,
+                    issues_found=[i.id for i in step_issues],
+                    persona_reaction=plan.get("persona_reaction", ""),
+                    confidence_level=plan.get("confidence_level", 0.5),
+                ))
+                break
+
+            # 3. EXECUTE each planned action
+            for action_data in actions:
+                action = Action(
+                    type=action_data.get("type", "screenshot"),
+                    target=action_data.get("target", ""),
+                    value=action_data.get("value"),
+                    reason=action_data.get("reason", ""),
+                )
+
+                snapshot_before = snapshot
+                success = await execute_action(page, action)
+
+                action_desc = (
+                    f"{action.type}: {action.target}"
+                    + (f" = {action.value}" if action.value else "")
+                    + (f" ({'ok' if success else 'FAILED'})")
+                )
+                previous_actions.append(action_desc)
+
+                # Capture snapshot after action
+                snapshot = await capture_snapshot(
+                    page=page,
+                    output_dir=self.output_dir,
+                    snapshot_name=f"{persona.id}-{journey[:20]}-step{step_num:02d}-after",
+                    console_errors=console_errors,
+                    network_error_count=network_error_count,
+                )
+
+                # 4. JUDGE: Evaluate the new state with vision
+                step_issues = await self._judge_snapshot(
+                    snapshot=snapshot,
+                    persona=persona,
+                    journey=journey,
+                    step_number=step_num,
+                    max_steps=max_steps,
+                    action_description=action_desc,
+                    previous_actions=previous_actions,
+                )
+                issues.extend(step_issues)
+
+                steps.append(JourneyStep(
+                    step_number=step_num,
+                    action=action,
+                    snapshot_before=snapshot_before,
+                    snapshot_after=snapshot,
+                    screenshot_path=snapshot.screenshot_path,
+                    issues_found=[i.id for i in step_issues],
+                    persona_reaction=plan.get("persona_reaction", ""),
+                    confidence_level=plan.get("confidence_level", 0.5),
+                ))
+
+        return issues, steps
+
+    async def _plan_actions(
+        self,
+        snapshot: PageSnapshot,
+        persona: AgentPersona,
+        journey: str,
+        step_number: int,
+        max_steps: int,
+        previous_actions: list[str],
+    ) -> dict:
+        """Ask LLM to plan the next action(s) based on current page state."""
+        prompt = ACTION_PLAN_PROMPT_TEMPLATE.format(
+            persona_name=persona.name,
+            persona_role=persona.role,
+            persona_goals=", ".join(persona.goals),
+            patience_level=persona.patience_level,
+            expertise_level=persona.expertise_level,
+            journey=journey,
+            url=snapshot.url,
+            title=snapshot.title,
+            accessibility_tree=snapshot.accessibility_tree[:5000],
+            previous_actions="\n".join(previous_actions[-10:]),
+            step_number=step_number,
+            max_steps=max_steps,
+        )
+
+        try:
+            # Use vision if we have a screenshot
+            if snapshot.screenshot_base64:
+                screenshot_bytes = base64.b64decode(snapshot.screenshot_base64)
+                return self.llm.complete_json_with_vision(
+                    prompt,
+                    images=[(screenshot_bytes, "image/png")],
+                    system=ACTION_PLAN_SYSTEM_PROMPT,
+                )
+            else:
+                return self.llm.complete_json(prompt, system=ACTION_PLAN_SYSTEM_PROMPT)
+        except Exception as e:
+            logger.warning("Action planning failed: %s", e)
+            return {"actions": [], "journey_complete": True, "persona_reaction": "Planning failed"}
+
+    async def _judge_snapshot(
+        self,
+        snapshot: PageSnapshot,
+        persona: AgentPersona,
+        journey: str,
+        step_number: int,
+        max_steps: int,
+        action_description: str,
+        previous_actions: list[str],
+    ) -> list[Issue]:
+        """Evaluate a page snapshot from the persona's perspective using vision."""
+        page_context = snapshot_to_prompt_context(snapshot)
+
+        prompt = EVALUATION_PROMPT_TEMPLATE.format(
+            persona_name=persona.name,
+            persona_role=persona.role,
+            persona_goals=", ".join(persona.goals),
+            patience_level=persona.patience_level,
+            expertise_level=persona.expertise_level,
+            behavioral_style=persona.behavioral_style or "standard",
+            journey=journey,
+            step_number=step_number,
+            max_steps=max_steps,
+            page_context=page_context,
+            action_description=action_description,
+            previous_actions="\n".join(previous_actions[-10:]),
+        )
+
+        try:
+            # Send screenshot as vision input alongside text context
+            if snapshot.screenshot_base64:
+                screenshot_bytes = base64.b64decode(snapshot.screenshot_base64)
+                data = self.llm.complete_json_with_vision(
+                    prompt,
+                    images=[(screenshot_bytes, "image/png")],
+                    system=EVALUATION_SYSTEM_PROMPT,
+                )
+            else:
+                data = self.llm.complete_json(prompt, system=EVALUATION_SYSTEM_PROMPT)
+
+            return self._parse_issues(
+                data, persona, snapshot, step_number,
+            )
+        except Exception as e:
+            logger.error("Page evaluation failed: %s", e)
+            return []
+
+    def _parse_issues(
+        self,
+        data: dict,
+        persona: AgentPersona,
+        snapshot: PageSnapshot,
+        step_number: int,
+    ) -> list[Issue]:
+        """Parse LLM evaluation response into Issue objects."""
+        raw_issues = data.get("issues", [])
+        issues: list[Issue] = []
+
+        for raw in raw_issues:
+            # Map category string to enum
+            cat = raw.get("category", "functional")
+            try:
+                category = IssueCategory(cat)
+            except ValueError:
+                category = IssueCategory.functional
+
+            sev = raw.get("severity", "medium")
+            try:
+                severity = Severity(sev)
+            except ValueError:
+                severity = Severity.medium
+
+            platform = (
+                Platform.mobile_web
+                if persona.device_preference == Platform.mobile_web
+                else Platform.web
+            )
+
+            evidence_ref = raw.get("evidence_ref", f"step-{step_number}")
+            screenshot_file = Path(snapshot.screenshot_path).name if snapshot.screenshot_path else ""
+
+            issues.append(Issue(
+                title=raw.get("title", "Untitled issue"),
+                severity=severity,
+                confidence=raw.get("confidence", 0.7),
+                platform=platform,
+                category=category,
+                agent=persona.id,
+                user_impact=raw.get("user_impact", ""),
+                repro_steps=raw.get("repro_steps", [
+                    f"Navigate to {snapshot.url}",
+                    f"At {evidence_ref}: {raw.get('title', '')}",
+                ]),
+                expected=raw.get("expected", ""),
+                actual=raw.get("actual", ""),
+                observed_facts=raw.get("observed_facts", []),
+                inferred_judgment=raw.get("inferred_judgment", ""),
+                hypotheses=raw.get("hypotheses", []),
+                evidence=Evidence(
+                    screenshots=[screenshot_file] if screenshot_file else [],
+                ),
+                likely_product_area=raw.get("likely_product_area", ""),
+                repair_brief=raw.get("repair_brief", ""),
+            ))
+
+        return issues
 
     async def scrape_landing_page(self, url: str) -> str:
         """Scrape visible text from a URL for intent modeling. Returns page text."""
@@ -222,195 +528,52 @@ class WebRunner:
         if not config.credentials:
             return
         try:
-            # Look for common email/password fields
-            email_sel = 'input[type="email"], input[name="email"], input[id*="email"], input[placeholder*="email" i]'
-            pwd_sel = 'input[type="password"]'
+            # Use accessible strategies for login
+            email_strategies = [
+                lambda: page.get_by_label("Email").first,
+                lambda: page.get_by_role("textbox", name="email").first,
+                lambda: page.get_by_placeholder("Email").first,
+                lambda: page.locator('input[type="email"]').first,
+            ]
+            for get_el in email_strategies:
+                try:
+                    el = get_el()
+                    if await el.is_visible(timeout=2000):
+                        await el.fill(config.credentials.email or "")
+                        break
+                except Exception:
+                    continue
 
-            email_field = page.locator(email_sel).first
-            if await email_field.is_visible(timeout=3000):
-                await email_field.fill(config.credentials.email or "")
+            pwd_strategies = [
+                lambda: page.get_by_label("Password").first,
+                lambda: page.get_by_role("textbox", name="password").first,
+                lambda: page.locator('input[type="password"]').first,
+            ]
+            for get_el in pwd_strategies:
+                try:
+                    el = get_el()
+                    if await el.is_visible(timeout=2000):
+                        await el.fill(config.credentials.password or "")
+                        break
+                except Exception:
+                    continue
 
-            pwd_field = page.locator(pwd_sel).first
-            if await pwd_field.is_visible(timeout=3000):
-                await pwd_field.fill(config.credentials.password or "")
-
-            # Try common submit buttons
-            submit = page.locator(
-                'button[type="submit"], input[type="submit"], button:has-text("Log in"), '
-                'button:has-text("Sign in"), button:has-text("Login")'
-            ).first
-            if await submit.is_visible(timeout=2000):
-                await submit.click()
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+            # Submit
+            submit_strategies = [
+                lambda: page.get_by_role("button", name="Log in").first,
+                lambda: page.get_by_role("button", name="Sign in").first,
+                lambda: page.get_by_role("button", name="Login").first,
+                lambda: page.locator('button[type="submit"]').first,
+            ]
+            for get_el in submit_strategies:
+                try:
+                    el = get_el()
+                    if await el.is_visible(timeout=2000):
+                        await el.click()
+                        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                        break
+                except Exception:
+                    continue
 
         except Exception as e:
             logger.warning("Login attempt failed: %s", e)
-
-    async def _evaluate_page(
-        self,
-        page: Page,
-        persona: AgentPersona,
-        journey: str,
-        config: RunConfig,
-        console_errors: list[str],
-        load_time_ms: int,
-        previous_actions: list[str],
-    ) -> list[Issue]:
-        """Evaluate current page state from persona's perspective."""
-        # Capture screenshot
-        screenshot_name = f"{persona.id}-{len(previous_actions)}.png"
-        screenshot_path = self.output_dir / screenshot_name
-        await page.screenshot(path=str(screenshot_path), full_page=True)
-
-        # Get page text
-        try:
-            page_text = await page.evaluate("() => document.body.innerText")
-        except Exception:
-            page_text = "(Could not extract page text)"
-
-        # Count requests
-        request_count = 0  # Simplified; full HAR capture is a day-2 enhancement
-
-        prompt = EVALUATION_PROMPT_TEMPLATE.format(
-            persona_name=persona.name,
-            persona_role=persona.role,
-            persona_goals=", ".join(persona.goals),
-            patience_level=persona.patience_level,
-            expertise_level=persona.expertise_level,
-            behavioral_style=persona.behavioral_style,
-            journey=journey,
-            url=page.url,
-            title=await page.title(),
-            page_text=page_text[:6000],
-            console_errors="\n".join(console_errors[-10:]) if console_errors else "(none)",
-            load_time_ms=load_time_ms,
-            request_count=request_count,
-            previous_actions="\n".join(previous_actions[-10:]),
-        )
-
-        try:
-            data = self.llm.complete_json(prompt, system=EVALUATION_SYSTEM_PROMPT)
-            raw_issues = data.get("issues", [])
-            issues = []
-            for raw in raw_issues:
-                # Map category string to enum, with fallback
-                cat = raw.get("category", "functional")
-                try:
-                    category = IssueCategory(cat)
-                except ValueError:
-                    category = IssueCategory.functional
-
-                sev = raw.get("severity", "medium")
-                try:
-                    severity = Severity(sev)
-                except ValueError:
-                    severity = Severity.medium
-
-                issues.append(Issue(
-                    title=raw.get("title", "Untitled issue"),
-                    severity=severity,
-                    confidence=raw.get("confidence", 0.7),
-                    platform=Platform.mobile_web if persona.device_preference == Platform.mobile_web else Platform.web,
-                    category=category,
-                    agent=persona.id,
-                    user_impact=raw.get("user_impact", ""),
-                    repro_steps=raw.get("repro_steps", [f"Navigate to {page.url}"]),
-                    expected=raw.get("expected", ""),
-                    actual=raw.get("actual", ""),
-                    observed_facts=raw.get("observed_facts", []),
-                    inferred_judgment=raw.get("inferred_judgment", ""),
-                    hypotheses=raw.get("hypotheses", []),
-                    evidence=Evidence(screenshots=[screenshot_name]),
-                    likely_product_area=raw.get("likely_product_area", ""),
-                    repair_brief=raw.get("repair_brief", ""),
-                ))
-
-            return issues
-
-        except Exception as e:
-            logger.error("Page evaluation failed: %s", e)
-            return []
-
-    async def _explore_next(
-        self,
-        page: Page,
-        persona: AgentPersona,
-        journey: str,
-        config: RunConfig,
-        console_errors: list[str],
-        previous_actions: list[str],
-    ) -> list[Issue]:
-        """Take one exploration step and evaluate. Returns issues found."""
-        # Ask LLM what to do next based on current page
-        try:
-            page_text = await page.evaluate("() => document.body.innerText")
-        except Exception:
-            return []
-
-        nav_prompt = f"""You are {persona.name}. You are on: {page.url}
-Your journey: {journey}
-Previous actions: {", ".join(previous_actions[-5:])}
-
-Page text (truncated): {page_text[:3000]}
-
-What single action should you take next to continue evaluating this journey?
-Respond with JSON: {{"action": "click|navigate|type|scroll|done", "target": "selector or URL", "value": "for type actions", "description": "what and why"}}
-If the journey is complete or you can't proceed, use action "done"."""
-
-        try:
-            nav = self.llm.complete_json(nav_prompt)
-            action = nav.get("action", "done")
-
-            if action == "done":
-                return []
-
-            description = nav.get("description", "")
-            target = nav.get("target", "")
-
-            if action == "click" and target:
-                try:
-                    await page.locator(target).first.click(timeout=5000)
-                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                    previous_actions.append(f"Clicked: {target} ({description})")
-                except Exception:
-                    previous_actions.append(f"Failed to click: {target}")
-                    return []
-
-            elif action == "navigate" and target:
-                try:
-                    start = time.monotonic()
-                    await page.goto(target, wait_until="domcontentloaded", timeout=15000)
-                    load_time = int((time.monotonic() - start) * 1000)
-                    previous_actions.append(f"Navigated to: {target}")
-                except Exception:
-                    previous_actions.append(f"Failed to navigate: {target}")
-                    return []
-
-            elif action == "type" and target:
-                try:
-                    await page.locator(target).first.fill(nav.get("value", "test"))
-                    previous_actions.append(f"Typed in: {target}")
-                except Exception:
-                    return []
-
-            elif action == "scroll":
-                await page.evaluate("window.scrollBy(0, 600)")
-                previous_actions.append("Scrolled down")
-
-            else:
-                return []
-
-            # Evaluate new state
-            return await self._evaluate_page(
-                page=page,
-                persona=persona,
-                journey=journey,
-                config=config,
-                console_errors=console_errors,
-                load_time_ms=0,
-                previous_actions=previous_actions,
-            )
-
-        except Exception as e:
-            logger.error("Exploration step failed: %s", e)
-            return []
