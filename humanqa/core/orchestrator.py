@@ -31,6 +31,32 @@ from humanqa.runners.mobile_runner import MobileRunner
 
 logger = logging.getLogger(__name__)
 
+DEDUP_SYSTEM_PROMPT = """You are a deduplication engine for HumanQA.
+
+Your job is to cluster semantically similar issues from multiple QA agents.
+Two issues are duplicates if they describe the same underlying problem, even if:
+- They use different wording
+- They were found by different agents
+- They have different severity levels
+- One is more specific than the other
+
+Two issues are NOT duplicates if they:
+- Affect different pages or flows
+- Describe different root causes
+- Are in different categories AND about different UI elements
+
+Respond with JSON: {"clusters": [{"indices": [0, 3], "reason": "Both describe the same missing form validation"}]}
+
+Each issue index should appear in at most one cluster. Issues that are unique should NOT appear in any cluster."""
+
+DEDUP_PROMPT = """Cluster these issues by semantic similarity. Group duplicates together.
+
+## Issues
+{issue_list}
+
+Return clusters of duplicate issues. Each cluster should contain the indices of issues
+that describe the same underlying problem. Issues with no duplicates should be omitted."""
+
 JOURNEY_ASSIGNMENT_PROMPT = """You are the test planner for HumanQA.
 
 Given the product's critical journeys and a team of agent personas, assign journeys
@@ -219,22 +245,102 @@ class Orchestrator:
         return all_perf_issues, scores
 
     def _deduplicate_issues(self, issues: list[Issue]) -> list[Issue]:
-        """Remove near-duplicate issues found by multiple agents.
+        """Remove near-duplicate issues using LLM-based semantic clustering.
 
-        Keeps the highest-confidence version when duplicates are detected.
-        Uses title similarity as a simple heuristic; LLM-based dedup is day-2.
+        Sends issues to the LLM in batches for semantic similarity grouping.
+        For each cluster, keeps the highest-confidence version and annotates
+        with "also found by" info. Falls back to title-string matching if
+        LLM dedup fails.
         """
+        if not issues:
+            return []
+
+        # Small lists don't need LLM dedup
+        if len(issues) <= 3:
+            return self._deduplicate_by_title(issues)
+
+        try:
+            return self._deduplicate_with_llm(issues)
+        except Exception as e:
+            logger.warning("LLM dedup failed, falling back to title matching: %s", e)
+            return self._deduplicate_by_title(issues)
+
+    def _deduplicate_with_llm(self, issues: list[Issue]) -> list[Issue]:
+        """Use LLM to cluster semantically similar issues."""
+        # Process in batches of 30 to stay within token limits
+        batch_size = 30
+        all_deduped: list[Issue] = []
+
+        for batch_start in range(0, len(issues), batch_size):
+            batch = issues[batch_start:batch_start + batch_size]
+            if len(batch) <= 1:
+                all_deduped.extend(batch)
+                continue
+
+            issue_summaries = []
+            for i, issue in enumerate(batch):
+                issue_summaries.append(
+                    f'{i}: [{issue.severity.value}] "{issue.title}" '
+                    f'(agent={issue.agent}, category={issue.category.value}, '
+                    f'confidence={issue.confidence})'
+                )
+
+            prompt = DEDUP_PROMPT.format(
+                issue_list="\n".join(issue_summaries),
+            )
+
+            data = self.llm.complete_json(prompt, system=DEDUP_SYSTEM_PROMPT)
+            clusters = data.get("clusters", [])
+
+            if not clusters:
+                # LLM returned no clusters — keep all
+                all_deduped.extend(batch)
+                continue
+
+            used_indices: set[int] = set()
+            for cluster in clusters:
+                indices = cluster.get("indices", [])
+                if not indices:
+                    continue
+
+                # Validate indices
+                valid_indices = [idx for idx in indices if 0 <= idx < len(batch)]
+                if not valid_indices:
+                    continue
+
+                # Pick the highest-confidence issue as the representative
+                cluster_issues = [batch[idx] for idx in valid_indices]
+                best = max(cluster_issues, key=lambda x: x.confidence)
+
+                # Annotate with other agents who found similar issues
+                other_agents = [
+                    ci.agent for ci in cluster_issues
+                    if ci.id != best.id and ci.agent != best.agent
+                ]
+                for agent_name in other_agents:
+                    best.observed_facts.append(f"Also reported by agent: {agent_name}")
+
+                all_deduped.append(best)
+                used_indices.update(valid_indices)
+
+            # Add any issues not included in any cluster
+            for i, issue in enumerate(batch):
+                if i not in used_indices:
+                    all_deduped.append(issue)
+
+        return all_deduped
+
+    @staticmethod
+    def _deduplicate_by_title(issues: list[Issue]) -> list[Issue]:
+        """Fallback dedup: group by normalized title string."""
         if not issues:
             return []
 
         seen: dict[str, Issue] = {}
         for issue in issues:
-            # Normalize key: lowercase title, strip whitespace
             key = issue.title.lower().strip()
-            # Simple dedup: same title → keep higher confidence
             if key in seen:
                 if issue.confidence > seen[key].confidence:
-                    # Merge agents info
                     existing_agent = seen[key].agent
                     issue.observed_facts.append(
                         f"Also reported by agent: {existing_agent}"
