@@ -488,25 +488,63 @@ class Orchestrator:
         return all_perf_issues, scores
 
     def _deduplicate_issues(self, issues: list[Issue]) -> list[Issue]:
-        """Remove near-duplicate issues using LLM-based semantic clustering.
+        """Remove near-duplicate issues using a two-pass strategy.
 
-        Sends issues to the LLM in batches for semantic similarity grouping.
-        For each cluster, keeps the highest-confidence version and annotates
-        with "also found by" info. Falls back to title-string matching if
-        LLM dedup fails.
+        Pass 1 (fast): Group by error_signature — exact-match fingerprints
+        that merge issues with identical category+area+keywords.
+
+        Pass 2 (LLM): Send remaining issues for semantic clustering to catch
+        near-duplicates that differ in wording but share root cause.
+
+        Falls back to title-string matching if LLM dedup fails.
         """
         if not issues:
             return []
 
-        # Small lists don't need LLM dedup
-        if len(issues) <= 3:
-            return self._deduplicate_by_title(issues)
+        # Pass 1: Signature-based dedup (fast, deterministic)
+        after_sig = self._deduplicate_by_signature(issues)
+        logger.info(
+            "Signature dedup: %d -> %d issues", len(issues), len(after_sig),
+        )
+
+        # Pass 2: LLM semantic dedup on remaining issues
+        if len(after_sig) <= 3:
+            return after_sig
 
         try:
-            return self._deduplicate_with_llm(issues)
+            return self._deduplicate_with_llm(after_sig)
         except Exception as e:
             logger.warning("LLM dedup failed, falling back to title matching: %s", e)
-            return self._deduplicate_by_title(issues)
+            return self._deduplicate_by_title(after_sig)
+
+    @staticmethod
+    def _deduplicate_by_signature(issues: list[Issue]) -> list[Issue]:
+        """Fast dedup pass: merge issues with identical error_signature."""
+        if not issues:
+            return []
+
+        sig_map: dict[str, Issue] = {}
+        for issue in issues:
+            sig = issue.error_signature
+            if not sig:
+                # No signature — keep as-is (will be handled by LLM pass)
+                sig = issue.id  # unique, so no merging
+
+            if sig in sig_map:
+                existing = sig_map[sig]
+                if issue.confidence > existing.confidence:
+                    issue.observed_facts.append(
+                        f"Also reported by agent: {existing.agent}"
+                    )
+                    sig_map[sig] = issue
+                else:
+                    existing.observed_facts.append(
+                        f"Also reported by agent: {issue.agent}"
+                    )
+            else:
+                sig_map[sig] = issue
+
+        return list(sig_map.values())
 
     def _deduplicate_with_llm(self, issues: list[Issue]) -> list[Issue]:
         """Use LLM to cluster semantically similar issues."""
