@@ -196,8 +196,18 @@ class JourneyStep(BaseModel):
 # Evidence
 # ---------------------------------------------------------------------------
 
+class ScreenshotEvidence(BaseModel):
+    """A screenshot with contextual metadata."""
+    path: str  # File path or filename
+    caption: str = ""  # Human-readable description of what this shows
+    step_ref: str = ""  # e.g. "step-3"
+    timestamp_ms: int = 0  # When captured relative to journey start
+    viewport: str = ""  # e.g. "1440x900" or "390x844"
+
+
 class Evidence(BaseModel):
     screenshots: list[str] = Field(default_factory=list)
+    screenshot_evidence: list[ScreenshotEvidence] = Field(default_factory=list)
     trace: str | None = None
     logs: list[str] = Field(default_factory=list)
     har: str | None = None

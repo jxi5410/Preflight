@@ -34,6 +34,7 @@ from humanqa.core.schemas import (
     PageSnapshot,
     Platform,
     RunConfig,
+    ScreenshotEvidence,
     Severity,
 )
 from humanqa.runners.page_snapshot import capture_snapshot, snapshot_to_prompt_context
@@ -501,6 +502,21 @@ class WebRunner:
             evidence_ref = raw.get("evidence_ref", f"step-{step_number}")
             screenshot_file = Path(snapshot.screenshot_path).name if snapshot.screenshot_path else ""
 
+            # Build rich screenshot evidence with caption
+            screenshot_evidence: list[ScreenshotEvidence] = []
+            if screenshot_file:
+                viewport_str = ""
+                if persona.device_preference == Platform.mobile_web:
+                    viewport_str = "390x844"
+                else:
+                    viewport_str = "1440x900"
+                screenshot_evidence.append(ScreenshotEvidence(
+                    path=screenshot_file,
+                    caption=raw.get("title", ""),
+                    step_ref=evidence_ref,
+                    viewport=viewport_str,
+                ))
+
             issues.append(Issue(
                 title=raw.get("title", "Untitled issue"),
                 severity=severity,
@@ -520,6 +536,7 @@ class WebRunner:
                 hypotheses=raw.get("hypotheses", []),
                 evidence=Evidence(
                     screenshots=[screenshot_file] if screenshot_file else [],
+                    screenshot_evidence=screenshot_evidence,
                 ),
                 likely_product_area=raw.get("likely_product_area", ""),
                 repair_brief=raw.get("repair_brief", ""),
