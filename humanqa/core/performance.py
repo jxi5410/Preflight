@@ -61,16 +61,71 @@ METRIC_UNITS: dict[str, str] = {
 }
 
 
+PRODUCT_TYPE_ALIASES: dict[str, str] = {
+    "marketing_site": "marketing_site",
+    "marketing": "marketing_site",
+    "landing": "marketing_site",
+    "landing_page": "marketing_site",
+    "brochure": "marketing_site",
+    "portfolio": "marketing_site",
+    "saas_app": "saas_app",
+    "saas": "saas_app",
+    "dashboard": "saas_app",
+    "platform": "saas_app",
+    "tool": "saas_app",
+    "mobile_web": "mobile_web",
+    "mobile": "mobile_web",
+    "ecommerce": "ecommerce",
+    "e-commerce": "ecommerce",
+    "marketplace": "ecommerce",
+    "store": "ecommerce",
+    "content": "content_site",
+    "blog": "content_site",
+    "news": "content_site",
+    "documentation": "content_site",
+    "docs": "content_site",
+    "wiki": "content_site",
+}
+
+# Ecommerce and content site budgets
+BUDGETS["ecommerce"] = {
+    "lcp_ms": (2500, 4000),
+    "cls_score": (0.05, 0.15),  # Stricter CLS — layout shift hurts conversion
+    "load_time_ms": (3000, 5000),
+    "network_error_count": (1, 3),
+}
+BUDGETS["content_site"] = {
+    "lcp_ms": (2000, 3500),
+    "cls_score": (0.05, 0.1),
+    "load_time_ms": (2500, 5000),
+    "network_error_count": (1, 5),
+}
+
+
 def classify_product_type(product_type: str) -> str:
-    """Map a product type string to a budget category."""
-    pt = product_type.lower()
+    """Map a product type string to a budget category.
+
+    Uses a keyword matching approach with explicit alias table for
+    product-type-aware performance budgets.
+    """
+    pt = product_type.lower().strip()
+
+    # Direct alias match
+    for keyword, category in PRODUCT_TYPE_ALIASES.items():
+        if keyword in pt:
+            return category
+
+    # Fallback keyword detection
     if any(kw in pt for kw in ("marketing", "landing", "brochure", "portfolio")):
         return "marketing_site"
-    # Check mobile before saas — "mobile web app" should be mobile, not saas
     if any(kw in pt for kw in ("mobile",)):
         return "mobile_web"
     if any(kw in pt for kw in ("saas", "dashboard", "app", "platform", "tool")):
         return "saas_app"
+    if any(kw in pt for kw in ("ecommerce", "e-commerce", "store", "marketplace")):
+        return "ecommerce"
+    if any(kw in pt for kw in ("content", "blog", "docs", "documentation", "news", "wiki")):
+        return "content_site"
     return "default"
 
 
@@ -192,3 +247,29 @@ def summarize_performance(
     summary["perf_warn_count"] = sum(1 for r in results if r.status == "warn")
     summary["perf_fail_count"] = sum(1 for r in results if r.status == "fail")
     return summary
+
+
+def score_explanation(product_type: str) -> str:
+    """Return a human-readable explanation of why a budget category was chosen."""
+    category = classify_product_type(product_type)
+    budget = BUDGETS.get(category, BUDGETS["default"])
+
+    explanations = {
+        "marketing_site": "Marketing/landing pages are expected to load fast for first impressions. Budgets are tight on LCP and load time.",
+        "saas_app": "SaaS applications trade initial load speed for interactivity. Budgets are more lenient on LCP but strict on CLS.",
+        "mobile_web": "Mobile web budgets account for slower networks and smaller devices. CLS is strict for touch interfaces.",
+        "ecommerce": "E-commerce sites need fast loads and zero layout shift to avoid hurting conversion rates. CLS budget is the strictest.",
+        "content_site": "Content/documentation sites prioritize fast text rendering. LCP budget is the tightest across categories.",
+        "default": "Using default performance budgets — product type was not confidently classified.",
+    }
+
+    explanation = explanations.get(category, explanations["default"])
+    budget_lines = []
+    for metric, (warn, fail) in budget.items():
+        label = METRIC_LABELS.get(metric, metric)
+        unit = METRIC_UNITS.get(metric, "")
+        warn_str = f"{warn:.0f}{unit}" if unit else f"{warn}"
+        fail_str = f"{fail:.0f}{unit}" if unit else f"{fail}"
+        budget_lines.append(f"  {label}: warn={warn_str}, fail={fail_str}")
+
+    return f"Category: {category}\n{explanation}\nBudgets:\n" + "\n".join(budget_lines)
