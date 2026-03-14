@@ -757,3 +757,166 @@ class TestRunTimeOptimizations:
             _with_timeout(fast_task(), 5.0, "test")
         )
         assert result == "done"
+
+
+# ===========================================================================
+# 11. Multi-provider tiered model support
+# ===========================================================================
+
+class TestTieredModelSupport:
+    """Tests for multi-provider tiered model configuration."""
+
+    def test_tier_presets_exist(self):
+        from humanqa.core.llm import TIER_PRESETS
+
+        assert "balanced" in TIER_PRESETS
+        assert "budget" in TIER_PRESETS
+        assert "premium" in TIER_PRESETS
+        assert "openai" in TIER_PRESETS
+
+    def test_balanced_uses_gemini(self):
+        from humanqa.core.llm import get_tier_config
+
+        provider, models = get_tier_config("balanced")
+        assert provider == "gemini"
+        assert "gemini" in models.fast
+        assert "gemini" in models.smart
+
+    def test_budget_uses_flash_lite(self):
+        from humanqa.core.llm import get_tier_config
+
+        provider, models = get_tier_config("budget")
+        assert provider == "gemini"
+        assert "lite" in models.fast
+        assert "flash" in models.smart
+
+    def test_premium_uses_claude(self):
+        from humanqa.core.llm import get_tier_config
+
+        provider, models = get_tier_config("premium")
+        assert provider == "anthropic"
+        assert "claude" in models.smart
+
+    def test_openai_tier(self):
+        from humanqa.core.llm import get_tier_config
+
+        provider, models = get_tier_config("openai")
+        assert provider == "openai"
+        assert "gpt-4o-mini" in models.fast
+        assert "gpt-4o" == models.smart
+
+    def test_invalid_tier_raises(self):
+        from humanqa.core.llm import get_tier_config
+
+        with pytest.raises(ValueError, match="Unknown tier"):
+            get_tier_config("nonexistent")
+
+    def test_default_tier_is_balanced(self):
+        from humanqa.core.llm import DEFAULT_TIER
+
+        assert DEFAULT_TIER == "balanced"
+
+    def test_llm_client_with_tier_balanced(self):
+        from humanqa.core.llm import LLMClient
+
+        client = LLMClient(tier="balanced")
+        assert client.provider == "gemini"
+        assert "gemini" in client.model
+        assert client._resolve_model("fast") == "gemini-2.0-flash"
+        assert client._resolve_model("smart") == "gemini-2.0-flash"
+
+    def test_llm_client_with_tier_premium(self):
+        from humanqa.core.llm import LLMClient
+
+        client = LLMClient(tier="premium")
+        assert client.provider == "anthropic"
+        assert "claude" in client.model
+
+    def test_llm_client_model_override_with_tier(self):
+        from humanqa.core.llm import LLMClient
+
+        client = LLMClient(tier="balanced", model="custom-model")
+        # Model override should apply to both tiers
+        assert client._resolve_model("fast") == "custom-model"
+        assert client._resolve_model("smart") == "custom-model"
+
+    def test_llm_client_without_tier(self):
+        from humanqa.core.llm import LLMClient
+
+        # No tier, explicit provider — should work like before
+        client = LLMClient(provider="gemini")
+        assert client.provider == "gemini"
+        assert client._resolve_model("fast") == client.model
+        assert client._resolve_model("smart") == client.model
+
+    def test_gemini_deferred_init_without_key(self):
+        """Gemini client should defer init when no API key is set."""
+        import os
+        from humanqa.core.llm import LLMClient
+
+        # Ensure no Gemini key
+        old_keys = {}
+        for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            old_keys[k] = os.environ.pop(k, None)
+
+        try:
+            client = LLMClient(tier="balanced")
+            assert client._client is None
+            assert client._gemini_deferred is True
+        finally:
+            for k, v in old_keys.items():
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_run_config_default_tier(self):
+        config = RunConfig(target_url="https://example.com")
+        assert config.llm_tier == "balanced"
+        assert config.llm_provider == "gemini"
+        assert config.llm_model == "gemini-2.0-flash"
+
+    def test_run_config_custom_tier(self):
+        config = RunConfig(
+            target_url="https://example.com",
+            llm_tier="premium",
+            llm_provider="anthropic",
+            llm_model="claude-sonnet-4-20250514",
+        )
+        assert config.llm_tier == "premium"
+
+    def test_cli_has_tier_option(self):
+        from humanqa.cli import main
+        cmd = main.commands["run"]
+        param_names = [p.name for p in cmd.params]
+        assert "tier" in param_names
+
+    def test_cli_tier_choices(self):
+        from humanqa.cli import main
+        cmd = main.commands["run"]
+        tier_param = [p for p in cmd.params if p.name == "tier"][0]
+        assert "balanced" in tier_param.type.choices
+        assert "budget" in tier_param.type.choices
+        assert "premium" in tier_param.type.choices
+        assert "openai" in tier_param.type.choices
+
+    def test_fast_tier_tagged_in_orchestrator(self):
+        """Verify orchestrator dedup calls use fast tier."""
+        from humanqa.core.orchestrator import Orchestrator
+        import inspect
+
+        source = inspect.getsource(Orchestrator._deduplicate_with_llm)
+        assert 'tier="fast"' in source
+
+    def test_fast_tier_tagged_in_persona_generator(self):
+        from humanqa.core.persona_generator import PersonaGenerator
+        import inspect
+
+        source = inspect.getsource(PersonaGenerator.generate_personas)
+        assert 'tier="fast"' in source
+
+    def test_smart_tier_default_in_web_runner(self):
+        """Web runner vision calls should NOT have tier='fast'."""
+        from humanqa.runners.web_runner import WebRunner
+        import inspect
+
+        source = inspect.getsource(WebRunner._judge_snapshot)
+        assert 'tier="fast"' not in source

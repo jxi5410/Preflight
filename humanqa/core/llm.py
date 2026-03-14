@@ -87,6 +87,7 @@ class LLMClient:
         self.provider = provider
         self._tier_models: TierModels | None = None
         self._client: Any = None
+        self._gemini_deferred = False
 
         # If tier is specified, override provider and model
         if tier:
@@ -94,9 +95,6 @@ class LLMClient:
             # model param still wins if explicitly set
             if model:
                 self._tier_models = TierModels(fast=model, smart=model)
-        else:
-            # No tier — single model for both fast and smart
-            pass
 
         # Set up provider client
         if self.provider == "anthropic":
@@ -139,8 +137,9 @@ class LLMClient:
 
     def _resolve_model(self, tier_tag: str = "smart") -> str:
         """Resolve model name based on tier tag (fast or smart)."""
-        if self._tier_models:
-            return self._tier_models.fast if tier_tag == "fast" else self._tier_models.smart
+        tier_models = getattr(self, "_tier_models", None)
+        if tier_models:
+            return tier_models.fast if tier_tag == "fast" else tier_models.smart
         return self.model
 
     # ------------------------------------------------------------------
