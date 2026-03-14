@@ -1,7 +1,7 @@
-"""Handoff Generator — produces HANDOFF.md and handoff.json for developer handoff.
+"""Handoff Generator — produces HANDOFF.md and handoff.json for AI coding tools.
 
-Transforms a HumanQA run result into an actionable developer document that
-maps issues to tasks, identifies feature gaps, and summarizes coverage.
+Generates output designed to be consumed directly by AI coding tools
+(Claude Code, Codex, Cursor) with zero reformatting.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import json
 import logging
 from pathlib import Path
 
-from humanqa.core.file_mapper import map_issue_to_files
+from humanqa.core.file_mapper import FileMapper
 from humanqa.core.schemas import (
     FeatureGap,
     Handoff,
@@ -24,12 +24,19 @@ logger = logging.getLogger(__name__)
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
-EFFORT_THRESHOLDS = {
-    "critical": "large",
-    "high": "medium",
-    "medium": "medium",
-    "low": "small",
-    "info": "small",
+COMPLEXITY_MAP = {
+    "critical": "significant",
+    "high": "moderate",
+    "medium": "moderate",
+    "low": "quick_fix",
+    "info": "quick_fix",
+}
+
+# Rough hour estimates per complexity
+HOURS_MAP = {
+    "quick_fix": 0.5,
+    "moderate": 1.5,
+    "significant": 3.0,
 }
 
 
@@ -46,71 +53,147 @@ class HandoffGenerator:
         repo_insights: RepoInsights | None = None,
     ) -> Handoff:
         """Build a Handoff from the run result."""
-        tasks = self._build_tasks(result, repo_insights)
+        mapper = FileMapper(repo_insights)
+        tasks = self._build_tasks(result, mapper)
+        self._infer_dependencies(tasks, result)
         feature_gaps = self._build_feature_gaps(result)
-        coverage = self._build_coverage_summary(result)
 
-        severity_counts = {}
+        severity_counts: dict[str, int] = {}
         for issue in result.issues:
             sev = issue.severity.value
             severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
+        total_hours = sum(HOURS_MAP.get(t.estimated_complexity, 1.5) for t in tasks)
+        hours_str = f"~{total_hours:.0f}-{total_hours * 1.3:.0f} hours" if tasks else "0"
+
         critical_high = severity_counts.get("critical", 0) + severity_counts.get("high", 0)
         summary = (
-            f"Found {len(result.issues)} issues ({critical_high} critical/high). "
-            f"{len(tasks)} actionable tasks, {len(feature_gaps)} feature gaps identified."
+            f"{len(result.issues)} issues found: "
+            f"{severity_counts.get('critical', 0)} critical, "
+            f"{severity_counts.get('high', 0)} high, "
+            f"{severity_counts.get('medium', 0)} medium, "
+            f"{severity_counts.get('low', 0)} low"
         )
 
-        handoff = Handoff(
+        tech_stack = repo_insights.tech_stack if repo_insights else []
+        repo_url = result.config.repo_url
+
+        return Handoff(
             run_id=result.run_id,
             product_name=result.intent_model.product_name,
+            repo_url=repo_url,
+            tech_stack=tech_stack,
             target_url=result.config.target_url,
-            summary=summary,
             tasks=tasks,
             feature_gaps=feature_gaps,
-            coverage_summary=coverage,
+            total_estimated_hours=hours_str,
+            summary=summary,
         )
-        return handoff
 
     def generate_all(
         self,
         result: RunResult,
         repo_insights: RepoInsights | None = None,
+        handoff_format: str = "generic",
     ) -> dict[str, str]:
         """Generate HANDOFF.md and handoff.json. Returns dict of format -> path."""
         handoff = self.generate(result, repo_insights)
-        paths = {}
-        paths["handoff_md"] = self._write_markdown(handoff)
+        paths: dict[str, str] = {}
+        paths["handoff_md"] = self._write_markdown(handoff, handoff_format)
         paths["handoff_json"] = self._write_json(handoff)
         return paths
 
     def _build_tasks(
-        self, result: RunResult, repo_insights: RepoInsights | None
+        self, result: RunResult, mapper: FileMapper
     ) -> list[HandoffTask]:
         """Convert issues into actionable HandoffTasks."""
-        tasks: list[HandoffTask] = []
-        for issue in result.issues:
-            if issue.severity == Severity.info:
-                continue  # Skip info-level issues
+        # Sort issues by severity first
+        sorted_issues = sorted(
+            result.issues,
+            key=lambda i: (SEVERITY_ORDER.get(i.severity.value, 5), -i.confidence),
+        )
 
-            likely_files = map_issue_to_files(issue, repo_insights)
+        tasks: list[HandoffTask] = []
+        task_num = 0
+        for issue in sorted_issues:
+            if issue.severity == Severity.info:
+                continue
+
+            task_num += 1
+            likely_files = mapper.map_issue_to_files(issue)
+            complexity = COMPLEXITY_MAP.get(issue.severity.value, "moderate")
+
+            # Build description from user_impact + observed facts
+            desc_parts = []
+            if issue.user_impact:
+                desc_parts.append(issue.user_impact)
+            elif issue.actual:
+                desc_parts.append(issue.actual)
+            description = " ".join(desc_parts) or issue.title
+
+            # Build verification suggestion
+            verification = ""
+            if issue.repro_steps:
+                verification = (
+                    f"After fixing, repeat the repro steps and confirm the expected "
+                    f"behavior. Write an e2e test covering "
+                    f"'{issue.likely_product_area or 'the affected area'}'."
+                )
+
             task = HandoffTask(
+                task_number=task_num,
                 issue_id=issue.id,
+                severity=issue.severity.value,
                 title=issue.title,
-                severity=issue.severity,
-                category=issue.category,
+                description=description,
                 likely_files=likely_files,
-                repair_brief=issue.repair_brief,
                 repro_steps=issue.repro_steps,
-                expected=issue.expected,
-                actual=issue.actual,
-                effort_estimate=EFFORT_THRESHOLDS.get(issue.severity.value, "medium"),
+                expected_behavior=issue.expected,
+                fix_guidance=issue.repair_brief,
+                verification=verification,
+                evidence_screenshots=issue.evidence.screenshots,
+                estimated_complexity=complexity,
             )
             tasks.append(task)
 
-        # Sort by severity then title
-        tasks.sort(key=lambda t: (SEVERITY_ORDER.get(t.severity.value, 5), t.title))
         return tasks
+
+    def _infer_dependencies(
+        self, tasks: list[HandoffTask], result: RunResult
+    ) -> None:
+        """Infer task dependencies from product area overlap and repro steps.
+
+        If task B's repro steps reference a page/flow that task A is about,
+        then B depends on A.
+        """
+        # Build a map of product area -> task number
+        area_to_task: dict[str, int] = {}
+        issue_map: dict[str, object] = {}
+        for issue in result.issues:
+            issue_map[issue.id] = issue
+
+        for task in tasks:
+            issue = issue_map.get(task.issue_id)
+            if issue and hasattr(issue, "likely_product_area") and issue.likely_product_area:
+                area_to_task[issue.likely_product_area.lower()] = task.task_number
+
+        for task in tasks:
+            issue = issue_map.get(task.issue_id)
+            if not issue:
+                continue
+            # Check if repro steps reference another task's product area
+            repro_text = " ".join(task.repro_steps).lower()
+            for area, dep_task_num in area_to_task.items():
+                if dep_task_num == task.task_number:
+                    continue
+                if area in repro_text:
+                    if dep_task_num not in task.depends_on:
+                        task.depends_on.append(dep_task_num)
+                    # Mark the other task as blocking this one
+                    for other in tasks:
+                        if other.task_number == dep_task_num:
+                            if task.task_number not in other.blocks:
+                                other.blocks.append(task.task_number)
 
     def _build_feature_gaps(self, result: RunResult) -> list[FeatureGap]:
         """Identify gaps between claimed features and observed behavior."""
@@ -119,126 +202,123 @@ class HandoffGenerator:
 
         for feat in expectations:
             if feat.verified is True:
-                continue  # Feature works as claimed
+                continue
 
-            # Find related issues
-            related = []
+            # Determine UI status
             feat_lower = feat.feature_name.lower()
-            for issue in result.issues:
-                if (
-                    feat_lower in issue.title.lower()
-                    or feat_lower in issue.likely_product_area.lower()
-                ):
-                    related.append(issue.id)
+            has_related = any(
+                feat_lower in issue.title.lower()
+                or feat_lower in issue.likely_product_area.lower()
+                for issue in result.issues
+            )
 
             if feat.verified is False:
-                status = "broken" if related else "missing"
+                ui_status = "different" if has_related else "not_found"
             else:
-                status = "partial" if related else "missing"
+                ui_status = "partial" if has_related else "not_found"
 
-            gaps.append(
-                FeatureGap(
-                    feature_name=feat.feature_name,
-                    source=feat.source,
-                    status=status,
-                    details=f"Feature '{feat.feature_name}' from {feat.source} was not verified"
-                    if not related
-                    else f"Feature '{feat.feature_name}' has {len(related)} related issue(s)",
-                    related_issues=related,
-                )
-            )
+            gaps.append(FeatureGap(
+                feature=feat.feature_name,
+                source=feat.source,
+                claim=f"{feat.source} claims '{feat.feature_name}'",
+                ui_status=ui_status,
+            ))
 
         return gaps
 
-    def _build_coverage_summary(self, result: RunResult) -> dict[str, object]:
-        """Build a coverage summary dict."""
-        entries = result.coverage.entries
-        visited = len([e for e in entries if e.status == "visited"])
-        failed = len([e for e in entries if e.status == "failed"])
-        pending = len([e for e in entries if e.status == "pending"])
-        return {
-            "total_entries": len(entries),
-            "visited": visited,
-            "failed": failed,
-            "pending": pending,
-            "visited_urls": sorted(result.coverage.visited_urls()),
-        }
-
-    def _write_markdown(self, handoff: Handoff) -> str:
-        """Write HANDOFF.md."""
+    def _write_markdown(self, handoff: Handoff, fmt: str = "generic") -> str:
+        """Write HANDOFF.md in the spec format."""
         lines: list[str] = []
-        lines.append("# Developer Handoff")
+
+        # Header
+        lines.append(f"# HumanQA Handoff — {handoff.product_name}")
+        lines.append(
+            f"Generated: {__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+            f" | Run: {handoff.run_id}"
+        )
         lines.append("")
-        lines.append(f"**Run ID:** {handoff.run_id}")
-        lines.append(f"**Product:** {handoff.product_name}")
-        lines.append(f"**Target:** {handoff.target_url}")
-        lines.append(f"**Generated:** {handoff.generated_at.strftime('%Y-%m-%d %H:%M UTC')}")
+
+        # Context
+        lines.append("## Context")
+        lines.append(f"Product: {handoff.product_name}")
+        if handoff.repo_url:
+            lines.append(f"Repo: {handoff.repo_url}")
+        if handoff.tech_stack:
+            lines.append(f"Tech stack: {', '.join(handoff.tech_stack)}")
+        lines.append(f"Target URL: {handoff.target_url}")
         lines.append("")
+
+        # Summary
         lines.append("## Summary")
-        lines.append("")
         lines.append(handoff.summary)
+        lines.append(f"Estimated scope: {handoff.total_estimated_hours} of implementation work")
+        lines.append("")
+        lines.append("---")
         lines.append("")
 
         # Tasks
-        if handoff.tasks:
-            lines.append("## Tasks")
+        total_tasks = len(handoff.tasks)
+        for task in handoff.tasks:
+            sev_label = task.severity.upper()
+            lines.append(f"## Task {task.task_number} of {total_tasks} — {sev_label}")
+            lines.append(f"### {task.title}")
+
+            lines.append(f"**What's wrong:** {task.description}")
+
+            if task.likely_files:
+                files_str = ", ".join(f"`{f}`" for f in task.likely_files)
+                lines.append(f"**Where to look:** {files_str}")
+
+            if task.repro_steps:
+                repro = " → ".join(task.repro_steps)
+                lines.append(f"**Repro:** {repro}")
+
+            if task.expected_behavior:
+                lines.append(f"**Expected:** {task.expected_behavior}")
+
+            if task.fix_guidance:
+                lines.append(f"**Fix guidance:** {task.fix_guidance}")
+
+            if task.verification:
+                lines.append(f"**Verify fix:** {task.verification}")
+
+            if task.evidence_screenshots:
+                for s in task.evidence_screenshots:
+                    lines.append(f"**Evidence:** {s}")
+
+            if task.depends_on:
+                deps = ", ".join(f"Task {d}" for d in task.depends_on)
+                lines.append(f"**Depends on:** {deps}")
+
+            lines.append(f"**Complexity:** {task.estimated_complexity}")
             lines.append("")
-            lines.append("| # | Severity | Category | Title | Effort | Files |")
-            lines.append("|---|----------|----------|-------|--------|-------|")
-            for i, task in enumerate(handoff.tasks, 1):
-                files_str = ", ".join(task.likely_files[:3]) if task.likely_files else "-"
-                lines.append(
-                    f"| {i} | {task.severity.value} | {task.category.value} | "
-                    f"{task.title} | {task.effort_estimate} | {files_str} |"
-                )
+            lines.append("---")
             lines.append("")
 
-            # Task details
-            lines.append("### Task Details")
+        # Dependency Notes
+        dep_notes = self._build_dependency_notes(handoff.tasks)
+        if dep_notes:
+            lines.append("## Dependency Notes")
+            for note in dep_notes:
+                lines.append(f"- {note}")
             lines.append("")
-            for task in handoff.tasks:
-                lines.append(f"#### [{task.severity.value.upper()}] {task.title}")
-                lines.append(f"**Issue ID:** {task.issue_id}")
-                if task.likely_files:
-                    lines.append(f"**Likely files:** {', '.join(task.likely_files)}")
-                if task.repair_brief:
-                    lines.append(f"**Fix brief:** {task.repair_brief}")
-                if task.repro_steps:
-                    lines.append("**Repro steps:**")
-                    for j, step in enumerate(task.repro_steps, 1):
-                        lines.append(f"  {j}. {step}")
-                if task.expected:
-                    lines.append(f"**Expected:** {task.expected}")
-                if task.actual:
-                    lines.append(f"**Actual:** {task.actual}")
-                lines.append("")
 
-        # Feature gaps
+        # Feature Gaps
         if handoff.feature_gaps:
-            lines.append("## Feature Gaps")
-            lines.append("")
-            lines.append("| Feature | Source | Status | Related Issues |")
-            lines.append("|---------|--------|--------|----------------|")
+            lines.append("## Feature Gaps (Repo claims vs UI reality)")
+            lines.append("These features are documented in the repo but not found in the UI:")
             for gap in handoff.feature_gaps:
-                related = ", ".join(gap.related_issues) if gap.related_issues else "-"
-                lines.append(f"| {gap.feature_name} | {gap.source} | {gap.status} | {related} |")
+                claim_str = f" ({gap.claim})" if gap.claim else ""
+                lines.append(f"- {gap.feature} [{gap.ui_status}]{claim_str}")
             lines.append("")
 
-        # Coverage
-        cov = handoff.coverage_summary
-        if cov:
-            lines.append("## Coverage")
-            lines.append("")
-            lines.append(f"- Visited: {cov.get('visited', 0)}")
-            lines.append(f"- Failed: {cov.get('failed', 0)}")
-            lines.append(f"- Pending: {cov.get('pending', 0)}")
-            visited_urls = cov.get("visited_urls", [])
-            if visited_urls:
-                lines.append("")
-                lines.append("**Visited URLs:**")
-                for url in visited_urls:
-                    lines.append(f"- {url}")
-            lines.append("")
+        # Verification Checklist
+        lines.append("## Verification Checklist")
+        rerun_cmd = f"humanqa run {handoff.target_url}"
+        if handoff.repo_url:
+            rerun_cmd += f" --repo {handoff.repo_url}"
+        lines.append(f"After all fixes, re-run: `{rerun_cmd}`")
+        lines.append("Expected: Critical and high issues should not reappear.")
 
         md_text = "\n".join(lines)
         md_path = self.output_dir / "HANDOFF.md"
@@ -247,8 +327,98 @@ class HandoffGenerator:
         return str(md_path)
 
     def _write_json(self, handoff: Handoff) -> str:
-        """Write handoff.json."""
+        """Write handoff.json in the spec format."""
+        # Build the spec-compliant JSON structure
+        data = {
+            "handoff_version": handoff.handoff_version,
+            "run_id": handoff.run_id,
+            "product": {
+                "name": handoff.product_name,
+                "repo": handoff.repo_url,
+                "tech_stack": handoff.tech_stack,
+                "target_url": handoff.target_url,
+            },
+            "tasks": [
+                {
+                    "task_number": t.task_number,
+                    "issue_id": t.issue_id,
+                    "severity": t.severity,
+                    "title": t.title,
+                    "description": t.description,
+                    "likely_files": t.likely_files,
+                    "repro_steps": t.repro_steps,
+                    "expected_behavior": t.expected_behavior,
+                    "fix_guidance": t.fix_guidance,
+                    "verification": t.verification,
+                    "evidence_screenshots": t.evidence_screenshots,
+                    "depends_on": t.depends_on,
+                    "blocks": t.blocks,
+                    "estimated_complexity": t.estimated_complexity,
+                }
+                for t in handoff.tasks
+            ],
+            "feature_gaps": [
+                {
+                    "feature": g.feature,
+                    "source": g.source,
+                    "claim": g.claim,
+                    "ui_status": g.ui_status,
+                }
+                for g in handoff.feature_gaps
+            ],
+            "dependency_graph": self._build_dependency_graph(handoff.tasks),
+            "total_estimated_hours": handoff.total_estimated_hours,
+            "summary": handoff.summary,
+        }
+
         json_path = self.output_dir / "handoff.json"
-        json_path.write_text(handoff.model_dump_json(indent=2))
+        json_path.write_text(json.dumps(data, indent=2))
         logger.info("handoff.json written to %s", json_path)
         return str(json_path)
+
+    def _build_dependency_notes(self, tasks: list[HandoffTask]) -> list[str]:
+        """Build human-readable dependency notes."""
+        notes: list[str] = []
+        for task in tasks:
+            if task.blocks:
+                blocked_str = ", ".join(f"Task {b}" for b in task.blocks)
+                notes.append(
+                    f"Fix Task {task.task_number} ({task.title}) before "
+                    f"{blocked_str} — they depend on it"
+                )
+
+        # Find independent tasks that can be parallelized
+        independent = [
+            t for t in tasks if not t.depends_on and not t.blocks
+        ]
+        if len(independent) > 1:
+            nums = ", ".join(str(t.task_number) for t in independent)
+            notes.append(f"Tasks {nums} are independent and can be done in parallel")
+
+        return notes
+
+    def _build_dependency_graph(self, tasks: list[HandoffTask]) -> dict:
+        """Build the dependency_graph section for JSON output."""
+        graph: dict[str, dict] = {}
+        for task in tasks:
+            entry: dict[str, list[int]] = {}
+            if task.blocks:
+                entry["blocks"] = task.blocks
+            if task.depends_on:
+                entry["depends_on"] = task.depends_on
+            if entry:
+                graph[str(task.task_number)] = entry
+
+        # Add parallel_with for independent tasks
+        independent = [
+            t for t in tasks if not t.depends_on and not t.blocks
+        ]
+        if len(independent) > 1:
+            for t in independent:
+                others = [o.task_number for o in independent if o.task_number != t.task_number]
+                key = str(t.task_number)
+                if key not in graph:
+                    graph[key] = {}
+                graph[key]["parallel_with"] = others
+
+        return graph
