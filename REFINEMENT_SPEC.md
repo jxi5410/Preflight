@@ -1,0 +1,191 @@
+# HumanQA Refinement Spec — Report Quality & Handoff UX
+
+**Context:** First real-world run against LondonAI.network produced 140 issues. Many duplicates, weak evidence references, generic scores. This spec addresses the quality issues.
+
+---
+
+## 1. Aggressive Issue Deduplication & Grouping
+
+### Problem
+140 issues with many near-duplicates. "Missing privacy policy" and "Missing legal framework" appear as separate issues. "Evaluation blocked" errors appear multiple times.
+
+### Fix
+
+**1a. Semantic clustering before report generation.**
+After all issues are collected, before report generation:
+1. Group issues by URL + category as a first pass
+2. Use LLM to cluster remaining issues by semantic similarity
+3. Merge duplicates: keep highest-confidence version, note all reporting agents
+4. Group related issues under parent themes (e.g., "Legal & Privacy Gaps" containing privacy policy, data handling, terms of service issues)
+
+**1b. Error deduplication.**
+Issues with category "functional" that contain error messages in their title should be deduplicated by error signature (strip variable parts, match on error type + location).
+
+**1c. Add to schemas.py:**
+```python
+class IssueGroup(BaseModel):
+    """A group of related issues under a common theme."""
+    group_id: str
+    theme: str  # e.g., "Legal & Privacy Gaps"
+    description: str
+    issues: list[Issue] = Field(default_factory=list)
+    combined_severity: str = "high"  # Highest severity in group
+```
+
+**1d. Update report generator to output grouped issues, not flat list.**
+
+---
+
+## 2. Fix Evidence References
+
+### Problem
+"Step-5" on a blank screen means nothing. Screenshots referenced by filename with no context.
+
+### Fix
+
+**2a. Every screenshot gets a human-readable caption.**
+When capturing a screenshot during a journey step, generate a caption:
+- "After clicking 'Events' from the homepage — blank page with no content"
+- "Login form on /auth/signin — email and password fields visible"
+
+Store caption in Evidence model.
+
+**2b. Update Evidence schema:**
+```python
+class ScreenshotEvidence(BaseModel):
+    path: str
+    caption: str  # Human-readable description of what's shown
+    step_number: int | None = None
+    url: str = ""
+
+class Evidence(BaseModel):
+    screenshots: list[ScreenshotEvidence] = Field(default_factory=list)
+    # ... rest unchanged
+```
+
+**2c. In report.md, show caption with each screenshot:**
+```markdown
+**Evidence:**
+- ![Blank page after navigation](screenshots/step-5-events.png)
+  *After clicking 'Events' from homepage — page loaded with no visible content*
+```
+
+**2d. In report.html, embed screenshots inline with captions.**
+
+---
+
+## 3. Adaptive Scoring (Not Generic)
+
+### Problem
+Trust Score, Institutional Readiness, and Provenance Score appear on every report regardless of product type. A community events website doesn't need provenance scoring the same way a financial dashboard does.
+
+### Fix
+
+**3a. Scores should be selected based on intent model.**
+After building the intent model, determine which scores are relevant:
+- **Always show:** Trust Score (every product needs trust)
+- **Show if institutional_relevance >= moderate:** Institutional Readiness, Provenance Score
+- **Show if product_type involves content/data:** Provenance Score
+- **Show if product_type is e-commerce/fintech:** Security indicators, Payment trust
+- **Show if product_type is community/social:** Community safety, Moderation indicators
+
+**3b. Each score gets a contextual explanation.**
+Not just "Trust Score: 62%" but "Trust Score: 62% — For a community platform, this means users may hesitate to share personal info or attend events. Key gaps: no visible privacy policy, no data handling transparency."
+
+**3c. Update ReportGenerator to:**
+- Accept intent model when generating
+- Filter scores by product type relevance
+- Generate per-score explanations using LLM
+
+---
+
+## 4. Clickable Score Cards in HTML Report
+
+### Problem
+The score numbers (140 total, 12 critical, etc.) are static. User wants to click "12 CRITICAL" and jump to the critical issues list.
+
+### Fix
+Update `report.html` template:
+- Each severity count card links to `#severity-critical`, `#severity-high`, etc.
+- Each section has corresponding anchor IDs
+- Trust Score / Institutional / Provenance cards link to their respective detail sections
+- Add smooth scroll behavior
+
+---
+
+## 5. Repo Visibility Indicator
+
+### Problem
+User wants to know if the repo is public or private.
+
+### Fix
+**5a. Detect in repo analyzer** — check via GitHub API if repo is public or private.
+**5b. Store in RepoInsights:** `is_public: bool | None = None`
+**5c. Display in report header:** "Repo: https://github.com/jxi5410/AI.LDN (public)"
+
+---
+
+## 6. Handoff Fix Options
+
+### Problem
+The HANDOFF.md dumps all tasks. User wants to choose scope.
+
+### Fix
+Add a "How to Fix" section at the end of every HANDOFF.md:
+
+```markdown
+## How to Fix
+
+### Option A — Critical only ({n} tasks, ~{hours})
+```
+claude "Read HANDOFF.md and fix only CRITICAL tasks. Show me each fix before applying."
+```
+
+### Option B — Critical + High ({n} tasks, ~{hours})
+```
+claude "Read HANDOFF.md and fix CRITICAL and HIGH tasks in order."
+```
+
+### Option C — Everything ({n} tasks, ~{hours})
+```
+claude "Read HANDOFF.md and fix all tasks in priority order."
+```
+
+### Option D — Interactive review
+```
+claude "Read HANDOFF.md. Present each task, let me approve or skip, then fix approved ones."
+```
+```
+
+Calculate task counts and hour estimates per option from the issue data.
+
+---
+
+## 7. Reduce Total Run Time
+
+### Problem
+Run took too long without progress feedback. Even with the new progress tracker, the underlying run should be faster.
+
+### Fix
+
+**7a. Add timeouts to all LLM calls.** Default 60 seconds per call. If exceeded, log warning and continue with partial results.
+
+**7b. Limit exploration depth.** Currently agents can take up to 3 exploration steps per journey, with each step making an LLM call for planning + evaluation. Cap at 2 steps for non-critical journeys.
+
+**7c. Reduce persona count for simple products.** If the intent model confidence is high and the product is simple (< 5 routes), generate 3-4 personas instead of 6-8.
+
+**7d. Parallelize where safe.** Design lens, trust lens, and institutional lens can run concurrently (they all read the same result, none modify it).
+
+---
+
+## Build Order
+
+1. Evidence schema update (ScreenshotEvidence with captions)
+2. Issue grouping (IssueGroup schema + clustering logic)
+3. Aggressive deduplication (error signature matching + semantic clustering)
+4. Adaptive scoring (product-type-aware score selection)
+5. HTML report improvements (clickable cards, inline screenshots, score explanations)
+6. Repo visibility detection
+7. Handoff fix options
+8. Run time optimizations (timeouts, exploration caps, lens parallelization)
+9. Tests for all of the above
