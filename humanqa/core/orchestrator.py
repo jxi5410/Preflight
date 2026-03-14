@@ -324,7 +324,7 @@ class Orchestrator:
         )
 
         try:
-            data = self.llm.complete_json(prompt)
+            data = self.llm.complete_json(prompt, tier="fast")
             assignments_raw = data.get("assignments", [])
             result: dict[str, list[str]] = {}
             for entry in assignments_raw:
@@ -388,7 +388,7 @@ class Orchestrator:
         )
 
         try:
-            data = self.llm.complete_json(prompt, system=COMPARATIVE_SYSTEM_PROMPT)
+            data = self.llm.complete_json(prompt, system=COMPARATIVE_SYSTEM_PROMPT, tier="fast")
         except Exception as e:
             logger.warning("Comparative evaluation failed: %s", e)
             return []
@@ -570,7 +570,7 @@ class Orchestrator:
                 issue_list="\n".join(issue_summaries),
             )
 
-            data = self.llm.complete_json(prompt, system=DEDUP_SYSTEM_PROMPT)
+            data = self.llm.complete_json(prompt, system=DEDUP_SYSTEM_PROMPT, tier="fast")
             clusters = data.get("clusters", [])
 
             if not clusters:

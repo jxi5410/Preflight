@@ -92,7 +92,7 @@ class PersonaGenerator:
         logger.info("Generating agent personas for %s", intent.product_name)
 
         try:
-            data = self.llm.complete_json(prompt, system=PERSONA_SYSTEM_PROMPT)
+            data = self.llm.complete_json(prompt, system=PERSONA_SYSTEM_PROMPT, tier="fast")
             if not isinstance(data, list):
                 data = data.get("personas", data.get("agents", []))
 

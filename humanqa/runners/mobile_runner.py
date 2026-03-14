@@ -100,7 +100,7 @@ Respond with valid Maestro YAML flow syntax. Include:
 Respond with ONLY the YAML content, no markdown fences."""
 
         try:
-            yaml_content = self.llm.complete(prompt)
+            yaml_content = self.llm.complete(prompt, tier="fast")
             flow_path = self.output_dir / f"maestro-{persona.id}-{journey[:20]}.yaml"
             flow_path.write_text(yaml_content)
             return flow_path

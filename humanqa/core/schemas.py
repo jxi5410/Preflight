@@ -76,8 +76,9 @@ class RunConfig(BaseModel):
     design_guidance: str | None = None
     institutional_review: str = "auto"  # auto | on | off
     design_review: bool = True
-    llm_provider: str = "anthropic"
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_provider: str = "gemini"
+    llm_model: str = "gemini-2.0-flash"
+    llm_tier: str = "balanced"  # balanced | budget | premium | openai
     output_dir: str = "./artifacts"
 
 

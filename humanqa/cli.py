@@ -85,7 +85,19 @@ def _interactive_run():
         "[bold]Any specific flows to focus on?[/bold] (comma-separated, or press Enter for auto): "
     ).strip() or None
 
+    console.print(
+        "\n[bold]Model tier?[/bold] "
+        "[dim](balanced=Gemini default, budget=Gemini lite, premium=Claude, openai=GPT-4o)[/dim]"
+    )
+    tier = console.input("  Tier [balanced]: ").strip().lower() or "balanced"
+    if tier not in ("balanced", "budget", "premium", "openai"):
+        console.print(f"[yellow]Unknown tier '{tier}', using balanced[/yellow]")
+        tier = "balanced"
+
     console.print()
+
+    from humanqa.core.llm import get_tier_config
+    tier_provider, tier_models = get_tier_config(tier)
 
     config = RunConfig(
         target_url=url,
@@ -93,8 +105,9 @@ def _interactive_run():
         brief=brief,
         focus_flows=[f.strip() for f in focus.split(",")] if focus else [],
         output_dir="./artifacts",
-        llm_provider="anthropic",
-        llm_model="claude-sonnet-4-20250514",
+        llm_provider=tier_provider,
+        llm_model=tier_models.smart,
+        llm_tier=tier,
     )
 
     console.print(f"[bold]HumanQA[/bold] evaluating: [cyan]{url}[/cyan]")
@@ -139,8 +152,11 @@ def _interactive_run():
 @click.option("--focus", "-f", default=None, help="Comma-separated focus flows")
 @click.option("--personas", default=None, help="Comma-separated persona hints")
 @click.option("--output", "-o", default="./artifacts", help="Output directory")
-@click.option("--provider", default="anthropic", help="LLM provider: anthropic | openai")
+@click.option("--provider", default="gemini", help="LLM provider: gemini | anthropic | openai")
 @click.option("--model", default=None, help="LLM model override")
+@click.option("--tier", default="balanced",
+              type=click.Choice(["balanced", "budget", "premium", "openai"]),
+              help="Model tier: balanced (Gemini, default) | budget (Gemini lite+flash) | premium (Claude) | openai")
 @click.option("--institutional", default="auto", help="Institutional review: auto | on | off")
 @click.option("--no-design", is_flag=True, help="Skip design review")
 @click.option("--fail-on", default=None, type=click.Choice(["critical", "high", "medium", "low"]),
@@ -161,6 +177,7 @@ def run(
     output: str,
     provider: str,
     model: str | None,
+    tier: str,
     institutional: str,
     no_design: bool,
     fail_on: str | None,
@@ -170,6 +187,12 @@ def run(
 ):
     """Run an evaluation against a product URL."""
     setup_logging(verbose)
+
+    # Resolve provider from tier if not explicitly overridden
+    from humanqa.core.llm import get_tier_config
+    tier_provider, tier_models = get_tier_config(tier)
+    effective_provider = provider if model else tier_provider
+    effective_model = model or tier_models.smart
 
     # Parse credentials
     creds = None
@@ -190,8 +213,9 @@ def run(
         persona_hints=[p.strip() for p in personas.split(",")] if personas else [],
         focus_flows=[f.strip() for f in focus.split(",")] if focus else [],
         output_dir=output,
-        llm_provider=provider,
-        llm_model=model or ("claude-sonnet-4-20250514" if provider == "anthropic" else "gpt-4o"),
+        llm_provider=effective_provider,
+        llm_model=effective_model,
+        llm_tier=tier,
         institutional_review=institutional,
         design_review=not no_design,
     )
@@ -440,6 +464,7 @@ def handoff(run_dir: str, fmt: str, repo: str | None, github_token_env: str, out
         llm = LLMClient(
             provider=result.config.llm_provider,
             model=result.config.llm_model,
+            tier=result.config.llm_tier,
         )
         analyzer = RepoAnalyzer(llm)
         repo_insights = asyncio.run(

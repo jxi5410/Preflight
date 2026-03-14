@@ -415,7 +415,7 @@ class RepoAnalyzer:
         )
 
         try:
-            return self.llm.complete_json(prompt, system=SUMMARIZE_SYSTEM_PROMPT)
+            return self.llm.complete_json(prompt, system=SUMMARIZE_SYSTEM_PROMPT, tier="fast")
         except Exception as e:
             logger.warning("LLM summarization failed: %s", e)
             return {}

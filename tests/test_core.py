@@ -25,7 +25,7 @@ class TestSchemas:
     def test_run_config_minimal(self):
         config = RunConfig(target_url="https://example.com")
         assert config.target_url == "https://example.com"
-        assert config.llm_provider == "anthropic"
+        assert config.llm_provider == "gemini"
         assert config.institutional_review == "auto"
 
     def test_run_config_full(self):

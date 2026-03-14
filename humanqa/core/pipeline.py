@@ -60,7 +60,11 @@ async def _with_timeout(coro, timeout_sec: float, label: str):
 
 async def run_pipeline(config: RunConfig) -> RunResult:
     """Execute the complete HumanQA evaluation pipeline."""
-    llm = LLMClient(provider=config.llm_provider, model=config.llm_model)
+    llm = LLMClient(
+        provider=config.llm_provider,
+        model=config.llm_model if config.llm_model != "gemini-2.0-flash" else None,
+        tier=config.llm_tier,
+    )
 
     # Determine which steps will run
     inst_lens = InstitutionalLens(llm)
