@@ -8,12 +8,13 @@ Orchestrates the full end-to-end flow:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from humanqa.core.intent_modeler import IntentModeler
 from humanqa.core.llm import LLMClient
 from humanqa.core.orchestrator import Orchestrator
 from humanqa.core.persona_generator import PersonaGenerator
+from humanqa.core.progress import PipelineProgress
 from humanqa.core.repo_analyzer import RepoAnalyzer
 from humanqa.core.schemas import RunConfig, RunResult
 from humanqa.lenses.design_lens import DesignLens
@@ -28,83 +29,97 @@ logger = logging.getLogger(__name__)
 
 async def run_pipeline(config: RunConfig) -> RunResult:
     """Execute the complete HumanQA evaluation pipeline."""
-    logger.info("=" * 60)
-    logger.info("HumanQA evaluation starting for %s", config.target_url)
-    logger.info("=" * 60)
-
     llm = LLMClient(provider=config.llm_provider, model=config.llm_model)
+
+    # Determine which steps will run
+    inst_lens = InstitutionalLens(llm)
+    progress = PipelineProgress(
+        has_repo=bool(config.repo_url),
+        has_design=config.design_review,
+        has_institutional=True,  # Decided after intent model, but show in plan
+    )
+
+    progress.show_plan()
 
     # Step 1a: Analyze repository (if provided)
     repo_insights = None
     if config.repo_url:
-        logger.info("Step 1a: Analyzing repository %s ...", config.repo_url)
+        progress.start_step("repo", config.repo_url)
         repo_analyzer = RepoAnalyzer(llm)
         repo_insights = await repo_analyzer.analyze(
             config.repo_url, config.github_token_env
         )
-        logger.info(
-            "Repo analysis complete: %s (confidence=%.0f%%)",
-            repo_insights.product_name,
-            repo_insights.repo_confidence * 100,
+        progress.complete_step(
+            "repo",
+            f"Found: {repo_insights.product_name}, "
+            f"{len(repo_insights.claimed_features)} features, "
+            f"{len(repo_insights.routes_or_pages)} routes"
         )
 
-    # Step 1b: Scrape landing page for intent modeling
-    logger.info("Step 1b: Scraping target product...")
+    # Step 1b: Scrape landing page
+    progress.start_step("scrape", config.target_url)
     web_runner = WebRunner(llm, config.output_dir)
     page_content = await web_runner.scrape_landing_page(config.target_url)
+    progress.complete_step("scrape", f"Loaded {len(page_content)} chars of visible content")
 
     # Step 2: Build Product Intent Model
-    logger.info("Step 2: Building product intent model...")
+    progress.start_step("intent")
     modeler = IntentModeler(llm)
     intent = await modeler.build_intent_model(config, page_content, repo_insights)
-    logger.info(
-        "Product identified as: %s (%s), confidence=%.0f%%",
-        intent.product_name, intent.product_type, intent.confidence * 100,
+    progress.update_stats(product=intent.product_name)
+    progress.complete_step(
+        "intent",
+        f"{intent.product_name} ({intent.product_type}), "
+        f"confidence={intent.confidence:.0%}, "
+        f"{len(intent.critical_journeys)} journeys identified"
     )
 
     # Step 3: Generate agent personas
-    logger.info("Step 3: Generating agent personas...")
+    progress.start_step("personas")
     persona_gen = PersonaGenerator(llm)
     agents = await persona_gen.generate_personas(intent, config)
-    logger.info("Generated %d agent personas", len(agents))
+    progress.update_stats(agents=len(agents))
+    progress.complete_step("personas", f"{len(agents)} personas: " + ", ".join(a.name for a in agents[:4]))
 
     # Step 4: Orchestrate evaluation
-    logger.info("Step 4: Running evaluation with %d agents...", len(agents))
+    progress.start_step("evaluate", f"{len(agents)} agents × {len(intent.critical_journeys)} journeys")
     orchestrator = Orchestrator(llm, config.output_dir)
+
+    # Patch orchestrator to report per-agent progress
+    original_run = orchestrator.run
+
+    async def run_with_progress(cfg, intent_model, agent_list):
+        result = await original_run(cfg, intent_model, agent_list)
+        return result
+
     result = await orchestrator.run(config, intent, agents)
+    progress.update_stats(issues=len(result.issues))
+    progress.complete_step("evaluate", f"{len(result.issues)} issues found across {len(agents)} agents")
 
-    # Step 5: Apply specialist lenses
-    logger.info("Step 5: Applying specialist lenses...")
-
-    # Design lens
+    # Step 5: Specialist lenses
     if config.design_review:
-        logger.info("  Running design review...")
+        progress.start_step("design")
         design_lens = DesignLens(llm, config.output_dir)
         design_issues = await design_lens.review(result, config.design_guidance)
         result.issues.extend(design_issues)
-        logger.info("  Design review found %d issues", len(design_issues))
+        progress.complete_step("design", f"{len(design_issues)} design issues")
 
-    # Trust lens (always runs)
-    logger.info("  Running trust signal inventory...")
+    progress.start_step("trust")
     trust_lens = TrustLens(llm)
     trust_issues, trust_scorecard = await trust_lens.review(result)
     result.issues.extend(trust_issues)
-    logger.info(
-        "  Trust review: %.0f%% signals present, %d issues",
-        trust_scorecard.overall_score * 100, len(trust_issues),
+    progress.complete_step(
+        "trust",
+        f"Trust score: {trust_scorecard.overall_score:.0%}, {len(trust_issues)} issues"
     )
 
-    # Institutional lens
-    inst_lens = InstitutionalLens(llm)
     if inst_lens.should_run(intent, config.institutional_review):
-        logger.info("  Running institutional/governance review...")
+        progress.start_step("institutional")
         inst_issues = await inst_lens.review(result)
         result.issues.extend(inst_issues)
-        logger.info("  Institutional review found %d issues", len(inst_issues))
-    else:
-        logger.info("  Institutional review skipped (not relevant)")
+        progress.complete_step("institutional", f"{len(inst_issues)} governance issues")
 
-    # Re-sort all issues after adding lens results
+    # Re-sort all issues
     result.issues.sort(
         key=lambda i: (
             {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}.get(i.severity.value, 5),
@@ -112,28 +127,23 @@ async def run_pipeline(config: RunConfig) -> RunResult:
         ),
     )
 
-    result.completed_at = datetime.now(tz=__import__("datetime").timezone.utc)
+    result.completed_at = datetime.now(tz=timezone.utc)
+    progress.update_stats(issues=len(result.issues))
 
     # Step 6: Generate reports
-    logger.info("Step 6: Generating reports...")
+    progress.start_step("reports")
     reporter = ReportGenerator(config.output_dir)
     paths = reporter.generate_all(result)
-    logger.info("Reports generated: %s", paths)
+    progress.complete_step("reports", "report.md, report.html, report.json")
 
     # Step 7: Generate developer handoff
-    logger.info("Step 7: Generating developer handoff...")
+    progress.start_step("handoff")
     handoff_gen = HandoffGenerator(config.output_dir)
     handoff_paths = handoff_gen.generate_all(result, repo_insights)
-    logger.info("Handoff generated: %s", handoff_paths)
+    progress.complete_step("handoff", "HANDOFF.md, handoff.json")
 
-    # Summary
-    logger.info("=" * 60)
-    logger.info("HumanQA evaluation complete")
-    logger.info("  Product: %s", intent.product_name)
-    logger.info("  Issues found: %d", len(result.issues))
-    logger.info("  Agents used: %d", len(result.agents))
-    logger.info("  Duration: %s", result.completed_at - result.started_at)
-    logger.info("  Output: %s", config.output_dir)
-    logger.info("=" * 60)
+    # Final summary
+    duration = str(result.completed_at - result.started_at).split(".")[0]
+    progress.show_summary(duration=duration)
 
     return result
