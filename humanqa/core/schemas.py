@@ -300,38 +300,43 @@ class CoverageMap(BaseModel):
 # ---------------------------------------------------------------------------
 
 class HandoffTask(BaseModel):
-    """A task derived from an issue for developer handoff."""
+    """A single actionable task for an AI coding tool."""
+    task_number: int
     issue_id: str
+    severity: str
     title: str
-    severity: Severity = Severity.medium
-    category: IssueCategory = IssueCategory.functional
+    description: str = ""
     likely_files: list[str] = Field(default_factory=list)
-    repair_brief: str = ""
     repro_steps: list[str] = Field(default_factory=list)
-    expected: str = ""
-    actual: str = ""
-    effort_estimate: str = ""  # small | medium | large
+    expected_behavior: str = ""
+    fix_guidance: str = ""
+    verification: str = ""
+    evidence_screenshots: list[str] = Field(default_factory=list)
+    depends_on: list[int] = Field(default_factory=list)
+    blocks: list[int] = Field(default_factory=list)
+    estimated_complexity: str = "moderate"  # quick_fix | moderate | significant
 
 
 class FeatureGap(BaseModel):
-    """A gap between claimed features and observed behavior."""
-    feature_name: str
-    source: str = ""  # where the feature was claimed (e.g. README, docs)
-    status: str = ""  # missing | broken | partial
-    details: str = ""
-    related_issues: list[str] = Field(default_factory=list)
+    """A feature claimed in repo but not found in UI."""
+    feature: str
+    source: str  # Where the claim comes from
+    claim: str = ""  # What was claimed
+    ui_status: str = "not_found"  # not_found | partial | different
 
 
 class Handoff(BaseModel):
-    """Complete developer handoff document."""
-    run_id: str = ""
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
-    product_name: str = ""
-    target_url: str = ""
-    summary: str = ""
+    """Complete handoff package for an AI coding tool."""
+    handoff_version: str = "1.0"
+    run_id: str
+    product_name: str
+    repo_url: str | None = None
+    tech_stack: list[str] = Field(default_factory=list)
+    target_url: str
     tasks: list[HandoffTask] = Field(default_factory=list)
     feature_gaps: list[FeatureGap] = Field(default_factory=list)
-    coverage_summary: dict[str, Any] = Field(default_factory=dict)
+    total_estimated_hours: str = ""
+    summary: str = ""
 
 
 class RunResult(BaseModel):
