@@ -245,9 +245,23 @@ async def _fetch_github_data(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    result: dict[str, Any] = {"recent_prs": [], "open_issues": []}
+    result: dict[str, Any] = {"recent_prs": [], "open_issues": [], "is_public": None}
 
     async with httpx.AsyncClient(timeout=30) as client:
+        # Check repo visibility
+        try:
+            resp = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}",
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                repo_data = resp.json()
+                result["is_public"] = not repo_data.get("private", True)
+            elif resp.status_code == 404:
+                # 404 without auth means private; with auth means truly not found
+                result["is_public"] = False if not token else None
+        except httpx.HTTPError:
+            pass
         # Recent PRs (last 10, sorted by updated)
         try:
             resp = await client.get(
@@ -358,6 +372,7 @@ class RepoAnalyzer:
                 configuration_hints=[h[:200] for h in config_hints],
                 documentation_summary=llm_summary.get("documentation_summary", ""),
                 repo_confidence=round(confidence, 2),
+                is_public=gh_data.get("is_public"),
             )
         finally:
             # Clean up temp directory

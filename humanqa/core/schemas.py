@@ -95,6 +95,7 @@ class RepoInsights(BaseModel):
     configuration_hints: list[str] = Field(default_factory=list)
     documentation_summary: str = ""
     repo_confidence: float = 0.0
+    is_public: bool | None = None  # None = unknown, True = public, False = private
 
 
 class FeatureExpectation(BaseModel):
