@@ -178,7 +178,93 @@ Run took too long without progress feedback. Even with the new progress tracker,
 
 ---
 
-## Build Order
+## 8. Login / Auth Flow Evaluation (Without Credentials)
+
+### Problem
+HumanQA skipped the login page entirely because no credentials were provided. A real first-time user would encounter the login/signup page and evaluate it as a product surface — is it clear, trustworthy, functional? This is a high-priority evaluation that was completely missed.
+
+### Fix
+
+**8a. Add a dedicated auth flow evaluation step in the web runner.**
+Even without credentials, the runner must:
+- Navigate to the login/signup page (find it via navigation links, common URL patterns like /login, /signin, /auth, /register)
+- Evaluate the page visually (via screenshot + vision): is the login form clear? professional? trustworthy?
+- Check for: social login options, signup link, forgot password link, terms/privacy links
+- Test error paths: submit empty form, submit obviously invalid email (test@invalid), observe error handling
+- Evaluate: are error messages helpful? Does the form recover gracefully?
+- Assess as first-time user: would I feel confident creating an account here?
+
+**8b. This should run as one of the first journeys for the "first_time_user" persona.**
+The first-time user's natural flow is: land on homepage → look for signup/login → evaluate whether to create an account. If they wouldn't sign up, that's a critical finding.
+
+**8c. If credentials ARE provided:**
+- Test the actual login flow end-to-end
+- Test wrong password behavior
+- Test account recovery flow if discoverable
+- Evaluate post-login experience (does the user know where they are? what to do next?)
+
+**8d. Auth-specific issue categories to detect:**
+- No visible signup path
+- Login form without password visibility toggle
+- No social login options (for consumer products)
+- Poor error messages on invalid input
+- No "forgot password" flow
+- Missing trust indicators (SSL, privacy policy link near form)
+- Form doesn't work (submit does nothing, page error)
+
+---
+
+## 9. Mobile Responsiveness & Visual Layout Evaluation
+
+### Problem
+HumanQA missed critical mobile layout issues: content cut off, misalignment, information failing to show. The mobile evaluation only changes the viewport size but doesn't specifically check for responsive design problems. The evaluation prompts don't consistently send screenshots via vision for mobile, so visual-only problems (overflow, truncation, overlap) are invisible.
+
+### Fix
+
+**9a. Mandatory screenshot-via-vision for ALL mobile evaluations.**
+Every evaluation call for a mobile_web persona MUST include the screenshot as a vision input. No exceptions. The accessibility tree alone cannot detect visual layout problems.
+
+**9b. Add a dedicated mobile responsiveness check.**
+After the main evaluation completes, run a comparison check:
+1. For each key page visited during the run, capture screenshots at both desktop (1440×900) and mobile (390×844) viewports
+2. Send both screenshots to the LLM in a single vision call with the prompt:
+
+```
+Compare these two screenshots of the same page — desktop (left) and mobile (right).
+Identify any responsive design problems:
+- Content that is visible on desktop but cut off, hidden, or missing on mobile
+- Text that truncates or overflows its container
+- Elements that overlap or misalign
+- Touch targets that are too small (< 44px)
+- Horizontal scrolling (content wider than viewport)
+- Navigation that becomes unusable on mobile
+- Critical information that fails to display
+- Images or media that don't resize properly
+- Forms that are difficult to use on mobile
+For each issue, describe exactly what's wrong and where on the screen it appears.
+```
+
+**9c. Add mobile-specific evaluation prompts for every mobile persona.**
+When a persona has device_preference=mobile_web, add to their evaluation prompt:
+```
+You are on a mobile phone (390px wide). Pay special attention to:
+- Can you read all text without zooming?
+- Are buttons/links large enough to tap with a finger?
+- Does any content extend beyond the screen edge?
+- Is the navigation usable with one hand?
+- Are there any horizontal scrollbars?
+- Does critical information appear above the fold?
+```
+
+**9d. New issue category: "responsive" under IssueCategory enum.**
+Add `responsive = "responsive"` so mobile layout issues are categorized separately and clearly.
+
+**9e. Design lens must include mobile viewport.**
+The design lens currently reviews artifacts generically. It must specifically request and evaluate mobile screenshots, not just desktop ones.
+
+---
+
+## Build Order (Updated)
 
 1. Evidence schema update (ScreenshotEvidence with captions)
 2. Issue grouping (IssueGroup schema + clustering logic)
@@ -187,5 +273,7 @@ Run took too long without progress feedback. Even with the new progress tracker,
 5. HTML report improvements (clickable cards, inline screenshots, score explanations)
 6. Repo visibility detection
 7. Handoff fix options
-8. Run time optimizations (timeouts, exploration caps, lens parallelization)
-9. Tests for all of the above
+8. **Login/auth flow evaluation (without credentials)**
+9. **Mobile responsiveness & visual layout evaluation**
+10. Run time optimizations (timeouts, exploration caps, lens parallelization)
+11. Tests for all of the above
