@@ -7,17 +7,14 @@ consistency, and brand coherence. No code inspection.
 
 from __future__ import annotations
 
-import base64
 import logging
 from pathlib import Path
 
 from preflight.core.llm import LLMClient
 from preflight.core.schemas import (
-    Evidence,
     Issue,
     IssueCategory,
     Platform,
-    ProductIntentModel,
     RunResult,
     Severity,
 )
@@ -26,20 +23,23 @@ logger = logging.getLogger(__name__)
 
 DESIGN_REVIEW_SYSTEM = """You are a senior product designer conducting a design review for Preflight.
 
-You evaluate products from their visible UI only — screenshots and page descriptions.
+You evaluate products from their visible UI only — you are looking at actual screenshots.
 You never reference source code.
 
+IMPORTANT: You are receiving actual screenshot images. Base ALL findings on what you
+literally see in these images. Do not invent observations — only report what is visible.
+
 Assess across these dimensions:
-1. Visual hierarchy — Is it clear what's most important?
-2. Spacing and alignment — Is layout consistent and well-structured?
-3. Readability — Is text legible, well-sized, properly contrasted?
-4. CTA prominence — Are calls to action obvious and well-placed?
-5. Visual polish — Does it look professional or rough/unfinished?
-6. Consistency — Are patterns, colors, typography consistent across screens?
-7. Brand coherence — Does the visual language match the product's positioning?
-8. Mobile ergonomics — Are touch targets adequate? Is content usable on small screens?
-9. Component states — Do interactive elements show proper hover/active/disabled states?
-10. Information density — Is the density appropriate for the audience?
+1. Alignment — Are elements aligned to a consistent grid? Look for misaligned text, buttons, cards.
+2. Spacing — Is whitespace consistent? Are there areas that are too cramped or too sparse?
+3. Sizing — Are elements appropriately sized? Look for oversized/undersized text, buttons, images.
+4. Cut-off content — Is any text, image, or UI element clipped, truncated, or overflowing its container?
+5. Visual hierarchy — Is it clear what's most important on each screen?
+6. Readability — Is text legible, well-sized, properly contrasted?
+7. CTA prominence — Are calls to action obvious and well-placed?
+8. Visual polish — Does it look professional or rough/unfinished?
+9. Consistency — Are patterns, colors, typography consistent across screens?
+10. Brand coherence — Does the visual language match the product's positioning?
 
 ## EVIDENCE ANCHORING (MANDATORY)
 
@@ -116,15 +116,25 @@ class DesignLens:
         """Run design review on collected artifacts from a run."""
         intent = run_result.intent_model
 
-        # Gather screenshot references
-        screenshots = []
+        # Gather screenshot references and load actual image files
+        screenshot_names = []
         for issue in run_result.issues:
-            screenshots.extend(issue.evidence.screenshots)
+            screenshot_names.extend(issue.evidence.screenshots)
         # Also check artifact dir for additional screenshots
         if self.output_dir.exists():
             for f in self.output_dir.glob("*.png"):
-                if f.name not in screenshots:
-                    screenshots.append(f.name)
+                if f.name not in screenshot_names:
+                    screenshot_names.append(f.name)
+
+        # Load actual screenshot files for vision evaluation
+        images: list[tuple[bytes, str]] = []
+        for name in screenshot_names[:10]:  # Cap to manage token budget
+            path = self.output_dir / name
+            if path.exists():
+                try:
+                    images.append((path.read_bytes(), "image/png"))
+                except Exception as e:
+                    logger.debug("Could not read screenshot %s: %s", name, e)
 
         # Build page descriptions from coverage and issues
         page_descs = []
@@ -138,13 +148,19 @@ class DesignLens:
             product_name=intent.product_name,
             product_type=intent.product_type,
             target_audience=", ".join(intent.target_audience),
-            screenshot_list="\n".join(f"- {s}" for s in screenshots[:20]) or "(none captured)",
+            screenshot_list="\n".join(f"- {s}" for s in screenshot_names[:20]) or "(none captured)",
             page_descriptions="\n".join(page_descs[:30]) or "(none)",
             design_guidance=design_guidance or "(none provided)",
         )
 
         try:
-            data = self.llm.complete_json(prompt, system=DESIGN_REVIEW_SYSTEM)
+            if images:
+                data = self.llm.complete_json_with_vision(
+                    prompt, images=images, system=DESIGN_REVIEW_SYSTEM,
+                )
+            else:
+                logger.warning("No screenshot images available — falling back to text-only design review")
+                data = self.llm.complete_json(prompt, system=DESIGN_REVIEW_SYSTEM)
 
             design_issues = []
             for raw in data.get("design_issues", []):
