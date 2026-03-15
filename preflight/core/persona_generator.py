@@ -75,6 +75,7 @@ class PersonaGenerator:
         self,
         intent: ProductIntentModel,
         config: RunConfig,
+        memory_context: str = "",
     ) -> list[AgentPersona]:
         """Generate agent team from intent model."""
         prompt = PERSONA_PROMPT_TEMPLATE.format(
@@ -88,6 +89,9 @@ class PersonaGenerator:
             persona_hints=", ".join(config.persona_hints) if config.persona_hints else "(none)",
             focus_flows=", ".join(config.focus_flows) if config.focus_flows else "(auto)",
         )
+
+        if memory_context:
+            prompt += f"\n\n## Prior Evaluation History\n{memory_context}"
 
         logger.info("Generating agent personas for %s", intent.product_name)
 

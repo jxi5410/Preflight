@@ -110,7 +110,7 @@ async def run_pipeline(config: RunConfig) -> RunResult:
 
     # Step 1b: Scrape landing page (with accessibility tree for input detection)
     progress.start_step("scrape", config.target_url)
-    web_runner = WebRunner(llm, config.output_dir)
+    web_runner = WebRunner(llm, config.output_dir, memory_context=memory_context)
     scrape_result = await _with_timeout(
         web_runner.scrape_landing_page(config.target_url, include_a11y_tree=True),
         STEP_TIMEOUT_SECONDS["scrape"],
@@ -309,7 +309,7 @@ async def run_pipeline(config: RunConfig) -> RunResult:
     # Step 6: Generate reports
     progress.start_step("reports")
     reporter = ReportGenerator(config.output_dir)
-    paths = reporter.generate_all(result)
+    paths = reporter.generate_all(result, memory_context=memory_context)
     progress.complete_step("reports", "report.md, report.html, report.json")
 
     # Step 7: Generate developer handoff

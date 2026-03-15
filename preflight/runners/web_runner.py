@@ -148,10 +148,11 @@ ACTION_TIMEOUT_MS = 10000
 class WebRunner:
     """Runs web-based evaluation using Playwright with vision + a11y + deterministic actions."""
 
-    def __init__(self, llm: LLMClient, output_dir: str = "./artifacts"):
+    def __init__(self, llm: LLMClient, output_dir: str = "./artifacts", memory_context: str = ""):
         self.llm = llm
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.memory_context = memory_context
 
     async def evaluate(
         self,
@@ -730,6 +731,11 @@ class WebRunner:
             previous_actions="\n".join(previous_actions[-10:]),
         )
 
+        # Inject learned context from prior runs
+        system = EVALUATION_SYSTEM_PROMPT
+        if self.memory_context:
+            system += f"\n\n## LEARNED CONTEXT FROM PRIOR RUNS\n{self.memory_context}"
+
         try:
             # Send screenshot as vision input alongside text context
             if snapshot.screenshot_base64:
@@ -737,10 +743,10 @@ class WebRunner:
                 data = self.llm.complete_json_with_vision(
                     prompt,
                     images=[(screenshot_bytes, "image/png")],
-                    system=EVALUATION_SYSTEM_PROMPT,
+                    system=system,
                 )
             else:
-                data = self.llm.complete_json(prompt, system=EVALUATION_SYSTEM_PROMPT)
+                data = self.llm.complete_json(prompt, system=system)
 
             return self._parse_issues(
                 data, persona, snapshot, step_number,

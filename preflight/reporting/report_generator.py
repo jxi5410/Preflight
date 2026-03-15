@@ -28,16 +28,16 @@ class ReportGenerator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def generate_all(self, result: RunResult) -> dict[str, str]:
+    def generate_all(self, result: RunResult, memory_context: str = "") -> dict[str, str]:
         """Generate all report formats. Returns dict of format -> filepath."""
         paths = {}
-        paths["markdown"] = self.generate_markdown(result)
+        paths["markdown"] = self.generate_markdown(result, memory_context=memory_context)
         paths["json"] = self.generate_json(result)
         paths["html"] = self.generate_html(result)
         paths["repair_briefs"] = self.generate_repair_briefs(result)
         return paths
 
-    def generate_markdown(self, result: RunResult) -> str:
+    def generate_markdown(self, result: RunResult, memory_context: str = "") -> str:
         """Generate human-readable markdown report."""
         intent = result.intent_model
         issues = result.issues
@@ -174,6 +174,17 @@ class ReportGenerator:
         lines.append(f"- Failed navigations: {failed}")
         lines.append(f"- Total coverage entries: {len(result.coverage.entries)}")
         lines.append("")
+
+        # Learning context
+        if memory_context:
+            lines.append("## Learning Context")
+            lines.append("")
+            lines.append(
+                "This evaluation incorporated feedback from prior runs. "
+                "Known false positives were suppressed and evaluation "
+                "thresholds were adjusted based on user feedback."
+            )
+            lines.append("")
 
         # Category breakdown
         lines.append("## Issue Breakdown by Category")
