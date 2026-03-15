@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from preflight.core.intent_modeler import IntentModeler
 from preflight.core.llm import LLMClient
+from preflight.core.memory import ProductMemory
 from preflight.core.orchestrator import Orchestrator
 from preflight.core.persona_generator import PersonaGenerator
 from preflight.core.seed_input import SeedInputGenerator
@@ -66,6 +67,16 @@ async def run_pipeline(config: RunConfig) -> RunResult:
         model=config.llm_model if config.llm_model != "gemini-2.0-flash" else None,
         tier=config.llm_tier,
     )
+
+    # Load product memory for learned context
+    product_memory = ProductMemory()
+    mem_data = product_memory.load(config.target_url)
+    memory_context = product_memory.get_context_for_prompts(mem_data)
+    if memory_context:
+        logger.info(
+            "Loaded memory for %s (%d prior runs, %d known false positives)",
+            config.target_url, mem_data.run_count, len(mem_data.known_false_positives),
+        )
 
     # Determine which steps will run
     inst_lens = InstitutionalLens(llm)
@@ -141,7 +152,7 @@ async def run_pipeline(config: RunConfig) -> RunResult:
     # Step 3: Generate agent personas
     progress.start_step("personas")
     persona_gen = PersonaGenerator(llm)
-    agents = await persona_gen.generate_personas(intent, config)
+    agents = await persona_gen.generate_personas(intent, config, memory_context=memory_context)
     # Cap agent count
     if len(agents) > MAX_AGENTS:
         logger.info("Capping agents from %d to %d", len(agents), MAX_AGENTS)
@@ -273,6 +284,17 @@ async def run_pipeline(config: RunConfig) -> RunResult:
             result.issues.extend(inst_issues)
         progress.complete_step("institutional", f"{len(inst_issues or [])} governance issues")
 
+    # Filter out known false positives from memory
+    fp_titles = product_memory.get_false_positive_titles(mem_data)
+    if fp_titles:
+        before = len(result.issues)
+        result.issues = [
+            i for i in result.issues if i.title not in fp_titles
+        ]
+        filtered = before - len(result.issues)
+        if filtered:
+            logger.info("Filtered %d known false positives from results", filtered)
+
     # Re-sort all issues
     result.issues.sort(
         key=lambda i: (
@@ -295,6 +317,10 @@ async def run_pipeline(config: RunConfig) -> RunResult:
     handoff_gen = HandoffGenerator(config.output_dir)
     handoff_paths = handoff_gen.generate_all(result, repo_insights)
     progress.complete_step("handoff", "HANDOFF.md, handoff.json")
+
+    # Update product memory with run info
+    mem_data.product_name = intent.product_name
+    product_memory.save(mem_data)
 
     # Final summary
     duration = str(result.completed_at - result.started_at).split(".")[0]
