@@ -50,6 +50,49 @@ def _check_exit_code(result, fail_on: str | None) -> int:
     return 0
 
 
+def _collect_quick_feedback(result) -> None:
+    """Quick inline feedback collection after an interactive run."""
+    from preflight.core.memory import ProductMemory, RunFeedback
+
+    memory = ProductMemory()
+    mem_data = memory.load(result.config.target_url)
+    mem_data.product_name = result.intent_model.product_name
+
+    useful_ids: list[str] = []
+    fp_ids: list[str] = []
+
+    console.print("\n[dim]For each issue: v=valid, f=false positive, s=skip, q=quit[/dim]\n")
+
+    for i, issue in enumerate(result.issues, 1):
+        color = {
+            "critical": "red", "high": "red", "medium": "yellow",
+            "low": "blue", "info": "dim",
+        }.get(issue.severity.value, "white")
+
+        console.print(f"  [{color}][{issue.severity.value}][/{color}] {issue.title}")
+
+        rating = console.input(f"  ({i}/{len(result.issues)}) [v/f/s/q]: ").strip().lower()
+
+        if rating == "q":
+            break
+        elif rating == "v":
+            memory.record_issue_feedback(mem_data, issue.id, issue.title, "valid")
+            useful_ids.append(issue.id)
+        elif rating == "f":
+            memory.record_issue_feedback(mem_data, issue.id, issue.title, "false_positive")
+            fp_ids.append(issue.id)
+
+    run_fb = RunFeedback(
+        run_id=result.run_id,
+        useful_issues=useful_ids,
+        false_positives=fp_ids,
+    )
+    memory.record_run_feedback(mem_data, run_fb)
+    memory.save(mem_data)
+
+    console.print(f"\n[green]Feedback saved![/green] ({len(useful_ids)} valid, {len(fp_ids)} false positives)")
+
+
 @click.group(invoke_without_command=True)
 @click.version_option(version="0.2.0")
 @click.pass_context
@@ -167,6 +210,15 @@ def _interactive_run():
     console.print(f"    report.html — Interactive HTML report")
     console.print(f"    HANDOFF.md — Ready for Claude Code / Codex")
     console.print(f"    handoff.json — Machine-readable handoff")
+
+    # Auto-prompt for feedback after interactive runs
+    if result.issues:
+        console.print()
+        do_feedback = console.input(
+            "[bold]Rate these findings to improve future runs?[/bold] (y/N): "
+        ).strip().lower()
+        if do_feedback in ("y", "yes"):
+            _collect_quick_feedback(result)
 
 
 @main.command()
