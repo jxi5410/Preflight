@@ -1,26 +1,26 @@
-# HumanQA — Implementation Plan for Codex
+# Preflight — Implementation Plan for Codex
 
 **Date:** 2026-03-13
 **Status:** Active build plan. Supersedes original PRD build order.
 **Who executes:** Codex (or Claude Code)
-**Repo:** https://github.com/jxi5410/HumanQA
+**Repo:** https://github.com/jxi5410/Preflight
 
 ---
 
 ## Product Vision (Updated)
 
-HumanQA is a **team of AI companions** for developers — not a test automation tool.
+Preflight is a **team of AI companions** for developers — not a test automation tool.
 
 It reads your repo to understand what you're building, then evaluates your shipped product like a diverse team of real humans would. It exists because AI is enabling more solo builders and small teams who have good intuitions about what real human testers would notice, but lack the time and QA structure to do it themselves.
 
 **Core positioning:** The only tool that knows what you're *trying* to build (from your repo) and checks whether you actually built it (from the UI), through the eyes of multiple realistic users.
 
-### What HumanQA is NOT
+### What Preflight is NOT
 - Not a code reviewer (leave that to Claude Code / Codex)
 - Not a test automation framework (leave that to Playwright / Cypress)
 - Not an auto-healing test suite (leave that to mabl / QA Wolf)
 
-### What HumanQA IS
+### What Preflight IS
 - A team of realistic synthetic users who understand your product
 - An outside-in product judgment system
 - A companion that runs alongside development, not a post-ship batch tool
@@ -29,7 +29,7 @@ It reads your repo to understand what you're building, then evaluates your shipp
 
 ## The Repo Boundary — Critical Design Decision
 
-HumanQA reads the repo to **understand product intent**. It never judges code quality.
+Preflight reads the repo to **understand product intent**. It never judges code quality.
 
 ### What the Repo Analyzer MAY read:
 - README and docs/
@@ -69,7 +69,7 @@ What exists in the repo today:
 | Institutional Lens | `lenses/institutional_lens.py` | Scaffold — LLM-only review |
 | Report Generator | `reporting/report_generator.py` | Done — markdown + JSON + repair briefs |
 | Scheduler | `scheduling/scheduler.py` | Done — APScheduler cron |
-| CLI | `cli.py` | Done — `humanqa run` / `humanqa schedule` |
+| CLI | `cli.py` | Done — `preflight run` / `preflight schedule` |
 | Tests | `tests/test_core.py` | Done — 11 passing schema tests |
 
 ### Honest assessment of v0.1.0
@@ -87,7 +87,7 @@ The scaffolding works (installs, CLI runs, tests pass) but:
 ## Build Phases
 
 ## Phase 0: Repo Analyzer + Enhanced Intent Model
-**Goal:** Give HumanQA the context a real human tester would get during team onboarding.
+**Goal:** Give Preflight the context a real human tester would get during team onboarding.
 
 ### 0.1 Repo Analyzer (`core/repo_analyzer.py`)
 
@@ -148,7 +148,7 @@ Add to `schemas.py`:
 
 Add repo option:
 ```bash
-humanqa run https://my-product.com --repo https://github.com/user/repo
+preflight run https://my-product.com --repo https://github.com/user/repo
 ```
 
 ---
@@ -396,7 +396,7 @@ For risky actions:
 
 One command exports findings as GitHub issues:
 ```bash
-humanqa export-issues --repo https://github.com/user/repo --run ./artifacts/latest
+preflight export-issues --repo https://github.com/user/repo --run ./artifacts/latest
 ```
 
 Each issue becomes a GitHub issue with:
@@ -408,7 +408,7 @@ Each issue becomes a GitHub issue with:
 ### 4.2 Run Comparison / Regression Reports
 
 ```bash
-humanqa compare ./artifacts/run_20260313 ./artifacts/run_20260314
+preflight compare ./artifacts/run_20260313 ./artifacts/run_20260314
 ```
 
 Output:
@@ -421,7 +421,7 @@ Output:
 ### 4.3 CI Integration
 
 ```bash
-humanqa run https://staging.my-product.com --fail-on high --exit-code
+preflight run https://staging.my-product.com --fail-on high --exit-code
 # Exit 0 = no high/critical issues
 # Exit 1 = high or critical issues found
 ```
@@ -440,12 +440,12 @@ Use a simple Jinja2 template — no React/build step needed.
 ### 4.5 Webhook / Slack Summary
 
 ```bash
-humanqa run https://my-product.com --webhook https://hooks.slack.com/...
+preflight run https://my-product.com --webhook https://hooks.slack.com/...
 ```
 
 Post a summary:
 ```
-HumanQA Report: MyProduct
+Preflight Report: MyProduct
 🔴 2 Critical  🟠 5 High  🟡 8 Medium
 Top issue: "Checkout flow has no error recovery"
 Full report: [link]
@@ -468,7 +468,7 @@ Full report: [link]
 ## Technical Architecture (Target State)
 
 ```
-humanqa/
+preflight/
 ├── core/
 │   ├── schemas.py              # All Pydantic models
 │   ├── llm.py                  # LLM abstraction (text + vision + JSON)
@@ -555,13 +555,13 @@ Execute in this exact order. Each phase should be a working, testable increment.
 - **All prompts must be explicit and inspectable.** No hidden prompt magic. Store prompts as module-level constants.
 - **Prefer working end-to-end over perfect components.** A rough full pipeline beats a polished partial one.
 - **Test against real products.** Unit tests for schemas, integration tests against real URLs.
-- **Keep it installable with `pip install -e .`** and runnable with `humanqa run`.
+- **Keep it installable with `pip install -e .`** and runnable with `preflight run`.
 
 ---
 
 ## Success Criteria
 
-After all 5 batches, `humanqa run https://some-product.com --repo https://github.com/user/repo` should:
+After all 5 batches, `preflight run https://some-product.com --repo https://github.com/user/repo` should:
 
 1. Clone the repo and understand what the product claims to do
 2. Scrape the live product and build a rich intent model

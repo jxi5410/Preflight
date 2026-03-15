@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     AgentPersona,
     CoverageEntry,
     CoverageMap,
@@ -69,7 +69,7 @@ class TestComparison:
     """Tests for run-to-run comparison."""
 
     def test_new_issues_detected(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(issues=[], run_id="baseline")
         current = _make_run_result(
@@ -82,7 +82,7 @@ class TestComparison:
         assert len(result.resolved_issues) == 0
 
     def test_resolved_issues_detected(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(
             issues=[_make_issue("Old bug")],
@@ -94,7 +94,7 @@ class TestComparison:
         assert result.resolved_issues[0].title == "Old bug"
 
     def test_persistent_issues_detected(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         issue = _make_issue("Persistent bug", severity="medium")
         baseline = _make_run_result(issues=[issue], run_id="baseline")
@@ -108,7 +108,7 @@ class TestComparison:
         assert len(result.resolved_issues) == 0
 
     def test_regressed_issues_severity_increase(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(
             issues=[_make_issue("Bug", severity="low")],
@@ -125,7 +125,7 @@ class TestComparison:
         assert curr_issue.severity == Severity.critical
 
     def test_severity_decrease_not_regression(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(
             issues=[_make_issue("Bug", severity="critical")],
@@ -140,7 +140,7 @@ class TestComparison:
         assert len(result.persistent_issues) == 1
 
     def test_matching_uses_title_and_category(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(
             issues=[_make_issue("Same title", category="functional")],
@@ -156,7 +156,7 @@ class TestComparison:
         assert len(result.resolved_issues) == 1
 
     def test_case_insensitive_matching(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(
             issues=[_make_issue("Login Button Broken")],
@@ -171,7 +171,7 @@ class TestComparison:
         assert len(result.new_issues) == 0
 
     def test_comparison_summary_property(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(
             issues=[_make_issue("Old"), _make_issue("Persistent")],
@@ -186,7 +186,7 @@ class TestComparison:
         assert "Resolved: 1" in result.summary
 
     def test_to_markdown_output(self):
-        from humanqa.reporting.comparison import compare_runs
+        from preflight.reporting.comparison import compare_runs
 
         baseline = _make_run_result(
             issues=[_make_issue("Resolved bug", severity="high")],
@@ -198,20 +198,20 @@ class TestComparison:
         )
         result = compare_runs(baseline, current)
         md = result.to_markdown()
-        assert "# HumanQA Run Comparison" in md
+        assert "# Preflight Run Comparison" in md
         assert "baseline-1" in md
         assert "current-1" in md
         assert "New Issues" in md
         assert "Resolved Issues" in md
 
     def test_load_run_result_file_not_found(self, tmp_path):
-        from humanqa.reporting.comparison import load_run_result
+        from preflight.reporting.comparison import load_run_result
 
         with pytest.raises(FileNotFoundError):
             load_run_result(str(tmp_path / "nonexistent"))
 
     def test_load_run_result_success(self, tmp_path):
-        from humanqa.reporting.comparison import load_run_result
+        from preflight.reporting.comparison import load_run_result
 
         result = _make_run_result(run_id="loaded-run")
         json_path = tmp_path / "report.json"
@@ -222,7 +222,7 @@ class TestComparison:
         assert loaded.config.target_url == "https://example.com"
 
     def test_duplicate_titles_keep_highest_confidence(self):
-        from humanqa.reporting.comparison import _build_issue_map
+        from preflight.reporting.comparison import _build_issue_map
 
         issues = [
             _make_issue("Dup", confidence=0.5),
@@ -241,7 +241,7 @@ class TestGitHubExport:
     """Tests for GitHub issue export."""
 
     def test_format_issue_body_contains_sections(self):
-        from humanqa.reporting.github_export import format_issue_body
+        from preflight.reporting.github_export import format_issue_body
 
         issue = _make_issue(
             "Test Bug",
@@ -259,10 +259,10 @@ class TestGitHubExport:
         assert "## Repro Steps" in body
         assert "1. Go to login" in body
         assert "Repair Brief" in body
-        assert "HumanQA" in body
+        assert "Preflight" in body
 
     def test_format_issue_body_with_screenshots(self):
-        from humanqa.reporting.github_export import format_issue_body
+        from preflight.reporting.github_export import format_issue_body
 
         issue = _make_issue(
             "Visual Bug",
@@ -273,25 +273,25 @@ class TestGitHubExport:
         assert "screenshot1.png" in body
 
     def test_issue_labels_include_severity_and_category(self):
-        from humanqa.reporting.github_export import issue_labels
+        from preflight.reporting.github_export import issue_labels
 
         issue = _make_issue("Bug", severity="critical", category="accessibility")
         labels = issue_labels(issue)
-        assert "humanqa" in labels
+        assert "preflight" in labels
         assert "priority: critical" in labels
         assert "type: accessibility" in labels
 
     def test_export_dry_run(self):
-        from humanqa.reporting.github_export import export_issues_via_gh
+        from preflight.reporting.github_export import export_issues_via_gh
 
         issues = [_make_issue("Bug A"), _make_issue("Bug B")]
         results = export_issues_via_gh(issues, repo="owner/repo", dry_run=True)
         assert len(results) == 2
         assert all(r["status"] == "dry_run" for r in results)
-        assert all("[HumanQA]" in r["title"] for r in results)
+        assert all("[Preflight]" in r["title"] for r in results)
 
     def test_export_min_severity_filter(self):
-        from humanqa.reporting.github_export import export_issues_via_gh
+        from preflight.reporting.github_export import export_issues_via_gh
 
         issues = [
             _make_issue("Critical", severity="critical"),
@@ -306,7 +306,7 @@ class TestGitHubExport:
         assert "Critical" in results[0]["title"]
 
     def test_export_normalizes_repo_url(self):
-        from humanqa.reporting.github_export import export_issues_via_gh
+        from preflight.reporting.github_export import export_issues_via_gh
 
         issues = [_make_issue("Bug")]
         results = export_issues_via_gh(
@@ -314,9 +314,9 @@ class TestGitHubExport:
         )
         assert len(results) == 1
 
-    @patch("humanqa.reporting.github_export.subprocess.run")
+    @patch("preflight.reporting.github_export.subprocess.run")
     def test_export_calls_gh_cli(self, mock_run):
-        from humanqa.reporting.github_export import export_issues_via_gh
+        from preflight.reporting.github_export import export_issues_via_gh
 
         mock_run.return_value = MagicMock(
             returncode=0, stdout="https://github.com/owner/repo/issues/42\n",
@@ -328,9 +328,9 @@ class TestGitHubExport:
         assert "issues/42" in results[0]["url"]
         mock_run.assert_called_once()
 
-    @patch("humanqa.reporting.github_export.subprocess.run")
+    @patch("preflight.reporting.github_export.subprocess.run")
     def test_export_handles_gh_error(self, mock_run):
-        from humanqa.reporting.github_export import export_issues_via_gh
+        from preflight.reporting.github_export import export_issues_via_gh
 
         mock_run.return_value = MagicMock(
             returncode=1, stderr="auth required",
@@ -340,10 +340,10 @@ class TestGitHubExport:
         assert results[0]["status"] == "error"
         assert "auth required" in results[0]["error"]
 
-    @patch("humanqa.reporting.github_export.subprocess.run",
+    @patch("preflight.reporting.github_export.subprocess.run",
            side_effect=FileNotFoundError)
     def test_export_handles_missing_gh(self, mock_run):
-        from humanqa.reporting.github_export import export_issues_via_gh
+        from preflight.reporting.github_export import export_issues_via_gh
 
         issues = [_make_issue("Bug A"), _make_issue("Bug B")]
         results = export_issues_via_gh(issues, repo="owner/repo")
@@ -351,7 +351,7 @@ class TestGitHubExport:
         assert "gh CLI not found" in results[0]["error"]
 
     def test_export_summary_text(self):
-        from humanqa.reporting.github_export import export_summary
+        from preflight.reporting.github_export import export_summary
 
         results = [
             {"status": "created"}, {"status": "created"},
@@ -364,7 +364,7 @@ class TestGitHubExport:
         assert "1 errors" in summary
 
     def test_export_summary_empty(self):
-        from humanqa.reporting.github_export import export_summary
+        from preflight.reporting.github_export import export_summary
 
         assert export_summary([]) == "No issues to export"
 
@@ -377,7 +377,7 @@ class TestReportGenerator:
     """Tests for report generation including HTML."""
 
     def test_generate_markdown(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[
@@ -386,12 +386,12 @@ class TestReportGenerator:
         ])
         path = gen.generate_markdown(result)
         content = Path(path).read_text()
-        assert "# HumanQA Evaluation Report" in content
+        assert "# Preflight Evaluation Report" in content
         assert "Critical Bug" in content
         assert "CRITICAL" in content
 
     def test_generate_json(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[_make_issue("Bug")])
@@ -401,7 +401,7 @@ class TestReportGenerator:
         assert len(data["issues"]) == 1
 
     def test_generate_html(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(
@@ -418,7 +418,7 @@ class TestReportGenerator:
         assert "filterIssues" in html  # JavaScript filter
 
     def test_generate_html_with_screenshots(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[
@@ -430,7 +430,7 @@ class TestReportGenerator:
         assert "lightbox" in html.lower()
 
     def test_generate_repair_briefs(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[
@@ -447,7 +447,7 @@ class TestReportGenerator:
         assert "Update the handler" in content
 
     def test_generate_all(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[_make_issue("Bug")])
@@ -468,7 +468,7 @@ class TestWebhook:
     """Tests for webhook/Slack summary."""
 
     def test_build_summary_text(self):
-        from humanqa.reporting.webhook import build_summary_text
+        from preflight.reporting.webhook import build_summary_text
 
         result = _make_run_result(issues=[
             _make_issue("Bug A", severity="critical"),
@@ -476,21 +476,21 @@ class TestWebhook:
             _make_issue("Bug C", severity="medium"),
         ])
         text = build_summary_text(result)
-        assert "HumanQA Report" in text
+        assert "Preflight Report" in text
         assert "1 Critical" in text
         assert "1 High" in text
         assert "1 Medium" in text
         assert "Bug A" in text  # Top issue
 
     def test_build_summary_no_issues(self):
-        from humanqa.reporting.webhook import build_summary_text
+        from preflight.reporting.webhook import build_summary_text
 
         result = _make_run_result(issues=[])
         text = build_summary_text(result)
         assert "No issues found" in text
 
     def test_build_summary_with_scores(self):
-        from humanqa.reporting.webhook import build_summary_text
+        from preflight.reporting.webhook import build_summary_text
 
         result = _make_run_result(
             issues=[_make_issue("Bug")],
@@ -500,15 +500,15 @@ class TestWebhook:
         assert "Trust: 75%" in text
 
     def test_build_slack_payload(self):
-        from humanqa.reporting.webhook import build_slack_payload
+        from preflight.reporting.webhook import build_slack_payload
 
         result = _make_run_result(issues=[_make_issue("Bug")])
         payload = build_slack_payload(result)
         assert "text" in payload
-        assert "HumanQA Report" in payload["text"]
+        assert "Preflight Report" in payload["text"]
 
     def test_build_slack_payload_with_report_url(self):
-        from humanqa.reporting.webhook import build_slack_payload
+        from preflight.reporting.webhook import build_slack_payload
 
         result = _make_run_result(issues=[])
         payload = build_slack_payload(result, report_url="https://reports.example.com/1")
@@ -517,7 +517,7 @@ class TestWebhook:
 
     @pytest.mark.asyncio
     async def test_send_webhook_success(self):
-        from humanqa.reporting.webhook import send_webhook
+        from preflight.reporting.webhook import send_webhook
 
         result = _make_run_result(issues=[_make_issue("Bug")])
 
@@ -527,13 +527,13 @@ class TestWebhook:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("humanqa.reporting.webhook.httpx.AsyncClient", return_value=mock_client):
+        with patch("preflight.reporting.webhook.httpx.AsyncClient", return_value=mock_client):
             success = await send_webhook("https://hooks.slack.com/test", result)
         assert success is True
 
     @pytest.mark.asyncio
     async def test_send_webhook_failure(self):
-        from humanqa.reporting.webhook import send_webhook
+        from preflight.reporting.webhook import send_webhook
 
         result = _make_run_result(issues=[])
 
@@ -543,13 +543,13 @@ class TestWebhook:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("humanqa.reporting.webhook.httpx.AsyncClient", return_value=mock_client):
+        with patch("preflight.reporting.webhook.httpx.AsyncClient", return_value=mock_client):
             success = await send_webhook("https://hooks.slack.com/test", result)
         assert success is False
 
     @pytest.mark.asyncio
     async def test_send_webhook_exception(self):
-        from humanqa.reporting.webhook import send_webhook
+        from preflight.reporting.webhook import send_webhook
 
         result = _make_run_result(issues=[])
 
@@ -558,12 +558,12 @@ class TestWebhook:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("humanqa.reporting.webhook.httpx.AsyncClient", return_value=mock_client):
+        with patch("preflight.reporting.webhook.httpx.AsyncClient", return_value=mock_client):
             success = await send_webhook("https://hooks.slack.com/test", result)
         assert success is False
 
     def test_severity_emoji_mapping(self):
-        from humanqa.reporting.webhook import SEVERITY_EMOJI
+        from preflight.reporting.webhook import SEVERITY_EMOJI
 
         assert len(SEVERITY_EMOJI) == 5
         assert "critical" in SEVERITY_EMOJI
@@ -578,37 +578,37 @@ class TestCLI:
     """Tests for CLI exit codes and command structure."""
 
     def test_check_exit_code_no_threshold(self):
-        from humanqa.cli import _check_exit_code
+        from preflight.cli import _check_exit_code
 
         result = _make_run_result(issues=[_make_issue("Bug", severity="critical")])
         assert _check_exit_code(result, None) == 0
 
     def test_check_exit_code_critical_found(self):
-        from humanqa.cli import _check_exit_code
+        from preflight.cli import _check_exit_code
 
         result = _make_run_result(issues=[_make_issue("Bug", severity="critical")])
         assert _check_exit_code(result, "critical") == 1
 
     def test_check_exit_code_below_threshold(self):
-        from humanqa.cli import _check_exit_code
+        from preflight.cli import _check_exit_code
 
         result = _make_run_result(issues=[_make_issue("Bug", severity="low")])
         assert _check_exit_code(result, "high") == 0
 
     def test_check_exit_code_at_threshold(self):
-        from humanqa.cli import _check_exit_code
+        from preflight.cli import _check_exit_code
 
         result = _make_run_result(issues=[_make_issue("Bug", severity="medium")])
         assert _check_exit_code(result, "medium") == 1
 
     def test_check_exit_code_no_issues(self):
-        from humanqa.cli import _check_exit_code
+        from preflight.cli import _check_exit_code
 
         result = _make_run_result(issues=[])
         assert _check_exit_code(result, "critical") == 0
 
     def test_check_exit_code_multiple_severities(self):
-        from humanqa.cli import _check_exit_code
+        from preflight.cli import _check_exit_code
 
         result = _make_run_result(issues=[
             _make_issue("Info", severity="info"),
@@ -621,16 +621,16 @@ class TestCLI:
 
     def test_cli_group_exists(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
-        assert "HumanQA" in result.output
+        assert "Preflight" in result.output
 
     def test_cli_version(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["--version"])
@@ -639,7 +639,7 @@ class TestCLI:
 
     def test_cli_run_help(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["run", "--help"])
@@ -649,7 +649,7 @@ class TestCLI:
 
     def test_cli_compare_help(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["compare", "--help"])
@@ -659,7 +659,7 @@ class TestCLI:
 
     def test_cli_export_issues_help(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["export-issues", "--help"])
@@ -670,7 +670,7 @@ class TestCLI:
 
     def test_cli_compare_missing_dir(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["compare", "/nonexistent/a", "/nonexistent/b"])
@@ -678,7 +678,7 @@ class TestCLI:
 
     def test_cli_compare_valid_dirs(self, tmp_path):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         # Create two run dirs with report.json
         for name in ["baseline", "current"]:

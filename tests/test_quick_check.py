@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from humanqa.core.quick_check import QuickCheckResult, QuickIssue, quick_check
-from humanqa.core.schemas import (
+from preflight.core.quick_check import QuickCheckResult, QuickIssue, quick_check
+from preflight.core.schemas import (
     AgentPersona,
     CoverageEntry,
     CoverageMap,
@@ -60,7 +60,7 @@ def _make_run_result(issues=None, run_id="run-test", **kwargs) -> RunResult:
 
 
 # Patch target for WebRunner — it's imported locally inside quick_check
-_WEB_RUNNER_PATCH = "humanqa.runners.web_runner.WebRunner"
+_WEB_RUNNER_PATCH = "preflight.runners.web_runner.WebRunner"
 
 
 def _mock_web_runner(return_content="Test page content"):
@@ -343,7 +343,7 @@ class TestMCPServerTools:
 
     def test_mcp_quick_check_tool(self):
         """MCP quick_check tool should return valid JSON."""
-        from humanqa.mcp_server import humanqa_quick_check
+        from preflight.mcp_server import preflight_quick_check
 
         mock_llm = MagicMock()
         mock_llm.complete_json.return_value = {
@@ -356,13 +356,13 @@ class TestMCPServerTools:
         }
 
         with patch(_WEB_RUNNER_PATCH) as MockRunner, \
-             patch("humanqa.core.quick_check.LLMClient", return_value=mock_llm):
+             patch("preflight.core.quick_check.LLMClient", return_value=mock_llm):
             mock_instance = MagicMock()
             mock_instance.scrape_landing_page = AsyncMock(return_value="Test page")
             MockRunner.return_value = mock_instance
 
             result_json = asyncio.get_event_loop().run_until_complete(
-                humanqa_quick_check(url="https://example.com", focus="", tier="balanced")
+                preflight_quick_check(url="https://example.com", focus="", tier="balanced")
             )
 
         data = json.loads(result_json)
@@ -372,45 +372,45 @@ class TestMCPServerTools:
 
     def test_mcp_get_report_missing(self):
         """MCP get_report should return error for missing reports."""
-        from humanqa.mcp_server import humanqa_get_report
+        from preflight.mcp_server import preflight_get_report
 
         result_json = asyncio.get_event_loop().run_until_complete(
-            humanqa_get_report(run_dir="/nonexistent/path", format="markdown")
+            preflight_get_report(run_dir="/nonexistent/path", format="markdown")
         )
         data = json.loads(result_json)
         assert "error" in data
 
     def test_mcp_get_report_success(self, tmp_path):
         """MCP get_report should return report content."""
-        from humanqa.mcp_server import humanqa_get_report
+        from preflight.mcp_server import preflight_get_report
 
-        (tmp_path / "report.md").write_text("# HumanQA Report\n\nTest content")
+        (tmp_path / "report.md").write_text("# Preflight Report\n\nTest content")
 
         result = asyncio.get_event_loop().run_until_complete(
-            humanqa_get_report(run_dir=str(tmp_path), format="markdown")
+            preflight_get_report(run_dir=str(tmp_path), format="markdown")
         )
-        assert "# HumanQA Report" in result
+        assert "# Preflight Report" in result
         assert "Test content" in result
 
     def test_mcp_get_report_json(self, tmp_path):
         """MCP get_report should return raw JSON for json format."""
-        from humanqa.mcp_server import humanqa_get_report
+        from preflight.mcp_server import preflight_get_report
 
         report_data = _make_run_result(issues=[_make_issue("Bug")])
         (tmp_path / "report.json").write_text(report_data.model_dump_json(indent=2))
 
         result = asyncio.get_event_loop().run_until_complete(
-            humanqa_get_report(run_dir=str(tmp_path), format="json")
+            preflight_get_report(run_dir=str(tmp_path), format="json")
         )
         data = json.loads(result)
         assert data["run_id"] == "run-test"
 
     def test_mcp_get_report_invalid_format(self):
         """MCP get_report should reject unknown formats."""
-        from humanqa.mcp_server import humanqa_get_report
+        from preflight.mcp_server import preflight_get_report
 
         result_json = asyncio.get_event_loop().run_until_complete(
-            humanqa_get_report(run_dir="./artifacts", format="pdf")
+            preflight_get_report(run_dir="./artifacts", format="pdf")
         )
         data = json.loads(result_json)
         assert "error" in data
@@ -418,7 +418,7 @@ class TestMCPServerTools:
 
     def test_mcp_compare_success(self, tmp_path):
         """MCP compare should return structured comparison."""
-        from humanqa.mcp_server import humanqa_compare
+        from preflight.mcp_server import preflight_compare
 
         # Create baseline and current dirs with reports
         for name, issues in [("baseline", [_make_issue("Old Bug")]),
@@ -429,7 +429,7 @@ class TestMCPServerTools:
             (d / "report.json").write_text(r.model_dump_json())
 
         result_json = asyncio.get_event_loop().run_until_complete(
-            humanqa_compare(
+            preflight_compare(
                 baseline_dir=str(tmp_path / "baseline"),
                 current_dir=str(tmp_path / "current"),
             )
@@ -442,10 +442,10 @@ class TestMCPServerTools:
 
     def test_mcp_compare_missing_baseline(self):
         """MCP compare should return error for missing baseline."""
-        from humanqa.mcp_server import humanqa_compare
+        from preflight.mcp_server import preflight_compare
 
         result_json = asyncio.get_event_loop().run_until_complete(
-            humanqa_compare(
+            preflight_compare(
                 baseline_dir="/nonexistent/baseline",
                 current_dir="/nonexistent/current",
             )
@@ -455,7 +455,7 @@ class TestMCPServerTools:
 
     def test_mcp_compare_missing_current(self, tmp_path):
         """MCP compare should return error for missing current."""
-        from humanqa.mcp_server import humanqa_compare
+        from preflight.mcp_server import preflight_compare
 
         d = tmp_path / "baseline"
         d.mkdir()
@@ -463,7 +463,7 @@ class TestMCPServerTools:
         (d / "report.json").write_text(r.model_dump_json())
 
         result_json = asyncio.get_event_loop().run_until_complete(
-            humanqa_compare(
+            preflight_compare(
                 baseline_dir=str(tmp_path / "baseline"),
                 current_dir="/nonexistent/current",
             )
@@ -473,14 +473,14 @@ class TestMCPServerTools:
 
     def test_mcp_server_has_register_function(self):
         """MCP server module should expose _register_mcp_tools."""
-        from humanqa.mcp_server import _register_mcp_tools
+        from preflight.mcp_server import _register_mcp_tools
         assert callable(_register_mcp_tools)
 
     def test_mcp_main_requires_mcp_package(self):
         """main() should fail gracefully without mcp package."""
-        from humanqa.mcp_server import _HAS_MCP
+        from preflight.mcp_server import _HAS_MCP
         if not _HAS_MCP:
-            from humanqa.mcp_server import main
+            from preflight.mcp_server import main
             with pytest.raises(SystemExit):
                 main()
 
@@ -494,7 +494,7 @@ class TestCLICheck:
 
     def test_cli_check_help(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         result = runner.invoke(main, ["check", "--help"])
@@ -504,6 +504,6 @@ class TestCLICheck:
         assert "--json-output" in result.output
 
     def test_cli_check_exists_in_group(self):
-        from humanqa.cli import main
+        from preflight.cli import main
 
         assert "check" in main.commands

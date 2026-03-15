@@ -1,6 +1,6 @@
 # AI Coding Tool Handoff — Implementation Spec
 
-**Purpose:** Make HumanQA's output directly executable by AI coding tools (Claude Code, Codex, etc.) with zero reformatting. The user reviews and confirms; the coding tool executes.
+**Purpose:** Make Preflight's output directly executable by AI coding tools (Claude Code, Codex, etc.) with zero reformatting. The user reviews and confirms; the coding tool executes.
 
 ---
 
@@ -9,13 +9,13 @@
 Current repair briefs are markdown files written for humans. An engineer reads them, interprets them, then tells Claude Code what to fix. That's friction. The handoff should be:
 
 ```
-HumanQA finds issues → User reviews → User says "fix these" → AI coding tool executes
+Preflight finds issues → User reviews → User says "fix these" → AI coding tool executes
 ```
 
 Not:
 
 ```
-HumanQA finds issues → User reads report → User reformulates as prompts → AI coding tool executes
+Preflight finds issues → User reads report → User reformulates as prompts → AI coding tool executes
 ```
 
 ---
@@ -29,7 +29,7 @@ Generates a single `HANDOFF.md` file designed to be consumed directly by an AI c
 **Output format — a structured task list the coding tool can execute top-to-bottom:**
 
 ```markdown
-# HumanQA Handoff — [Product Name]
+# Preflight Handoff — [Product Name]
 Generated: 2026-03-14 02:00 UTC | Run: run-abc123
 
 ## Context
@@ -72,7 +72,7 @@ These features are documented in the README but not found in the UI:
 - CSV export on dashboard (README says "export your data")
 
 ## Verification Checklist
-After all fixes, re-run: `humanqa run https://product.com --repo https://github.com/user/repo`
+After all fixes, re-run: `preflight run https://product.com --repo https://github.com/user/repo`
 Expected: Critical and high issues should not reappear.
 ```
 
@@ -126,15 +126,15 @@ Machine-parseable version for tools that prefer structured input:
 
 ```bash
 # Default: generates all formats including handoff
-humanqa run https://product.com --repo https://github.com/user/repo
+preflight run https://product.com --repo https://github.com/user/repo
 
 # Explicit handoff-only output
-humanqa run https://product.com --handoff claude-code
+preflight run https://product.com --handoff claude-code
 
 # Just regenerate handoff from existing run
-humanqa handoff ./artifacts/report.json --format claude-code
-humanqa handoff ./artifacts/report.json --format codex
-humanqa handoff ./artifacts/report.json --format cursor
+preflight handoff ./artifacts/report.json --format claude-code
+preflight handoff ./artifacts/report.json --format codex
+preflight handoff ./artifacts/report.json --format cursor
 ```
 
 **`--handoff` flag values:**
@@ -149,7 +149,7 @@ humanqa handoff ./artifacts/report.json --format cursor
 - Tasks as numbered action items
 - File paths relative to repo root
 - Verification commands included
-- Can be fed directly: `claude "$(cat .humanqa/HANDOFF.md)"`
+- Can be fed directly: `claude "$(cat .preflight/HANDOFF.md)"`
 
 **Codex format** — generates JSON with task objects that map to Codex's task structure
 
@@ -258,8 +258,8 @@ handoff = await handoff_gen.generate(result)
 
 ## Success Criteria
 
-1. `humanqa run` produces a `HANDOFF.md` that Claude Code can execute directly
-2. User workflow is: run HumanQA → skim HANDOFF.md → paste into Claude Code → confirm
+1. `preflight run` produces a `HANDOFF.md` that Claude Code can execute directly
+2. User workflow is: run Preflight → skim HANDOFF.md → paste into Claude Code → confirm
 3. Tasks include likely file paths (not just "somewhere in the codebase")
 4. Tasks are ordered by severity and dependency
 5. Feature gaps (repo claims vs UI reality) are listed as separate tasks

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     ChecklistResult,
     CoverageEntry,
     CoverageMap,
@@ -21,12 +21,12 @@ from humanqa.core.schemas import (
     TrustScorecard,
     TrustSignal,
 )
-from humanqa.lenses.institutional_lens import (
+from preflight.lenses.institutional_lens import (
     INSTITUTIONAL_CHECKLIST,
     INSTITUTIONAL_SYSTEM,
     InstitutionalLens,
 )
-from humanqa.lenses.trust_lens import (
+from preflight.lenses.trust_lens import (
     TRUST_SIGNALS,
     TRUST_ANALYSIS_SYSTEM,
     TrustLens,

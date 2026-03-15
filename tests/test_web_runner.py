@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
 
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     Action,
     AgentPersona,
     CoverageMap,
@@ -20,11 +20,11 @@ from humanqa.core.schemas import (
     RunConfig,
     Severity,
 )
-from humanqa.core.actions import (
+from preflight.core.actions import (
     _format_a11y_node,
     ACTION_PLAN_SYSTEM_PROMPT,
 )
-from humanqa.runners.page_snapshot import snapshot_to_prompt_context
+from preflight.runners.page_snapshot import snapshot_to_prompt_context
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ class TestSnapshotToPrompt:
 class TestLLMVision:
     def test_complete_with_vision_anthropic(self):
         """Test that vision method formats Anthropic API call correctly."""
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         mock_client = MagicMock()
         mock_msg = MagicMock()
@@ -284,7 +284,7 @@ class TestLLMVision:
 
     def test_complete_with_vision_openai(self):
         """Test that vision method formats OpenAI API call correctly."""
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         mock_client = MagicMock()
         mock_choice = MagicMock()
@@ -313,7 +313,7 @@ class TestLLMVision:
 
     def test_complete_json_with_vision(self):
         """Test JSON extraction from vision response."""
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         mock_client = MagicMock()
         mock_msg = MagicMock()
@@ -335,13 +335,13 @@ class TestLLMVision:
 
     def test_extract_json_with_markdown_fences(self):
         """Test JSON extraction handles markdown code fences."""
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         result = LLMClient._extract_json('```json\n{"key": "value"}\n```')
         assert result["key"] == "value"
 
     def test_extract_json_plain(self):
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         result = LLMClient._extract_json('{"a": 1}')
         assert result["a"] == 1
@@ -356,7 +356,7 @@ class TestWebRunnerIssueParser:
     """Test the issue parsing logic in WebRunner."""
 
     def test_parse_issues_basic(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         mock_llm = MagicMock()
         runner = WebRunner(mock_llm, "/tmp/test-artifacts")
@@ -394,7 +394,7 @@ class TestWebRunnerIssueParser:
         assert "step1.png" in issues[0].evidence.screenshots[0]
 
     def test_parse_issues_invalid_category_fallback(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         runner = WebRunner(MagicMock(), "/tmp/test-artifacts")
         persona = AgentPersona(name="T", role="R", persona_type="pt")
@@ -410,7 +410,7 @@ class TestWebRunnerIssueParser:
         assert issues[0].category == IssueCategory.functional
 
     def test_parse_issues_mobile_platform(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         runner = WebRunner(MagicMock(), "/tmp/test-artifacts")
         persona = AgentPersona(
@@ -426,7 +426,7 @@ class TestWebRunnerIssueParser:
         assert issues[0].platform == Platform.mobile_web
 
     def test_parse_issues_empty(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         runner = WebRunner(MagicMock(), "/tmp/test-artifacts")
         persona = AgentPersona(name="T", role="R", persona_type="pt")
@@ -442,7 +442,7 @@ class TestWebRunnerPlanActions:
 
     @pytest.mark.asyncio
     async def test_plan_with_vision(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         mock_llm = MagicMock()
         mock_llm.complete_json_with_vision.return_value = {
@@ -484,7 +484,7 @@ class TestWebRunnerPlanActions:
 
     @pytest.mark.asyncio
     async def test_plan_without_screenshot_falls_back(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         mock_llm = MagicMock()
         mock_llm.complete_json.return_value = {
@@ -503,7 +503,7 @@ class TestWebRunnerPlanActions:
 
     @pytest.mark.asyncio
     async def test_plan_llm_failure_graceful(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         mock_llm = MagicMock()
         mock_llm.complete_json.side_effect = Exception("API error")
@@ -522,7 +522,7 @@ class TestWebRunnerJudge:
 
     @pytest.mark.asyncio
     async def test_judge_with_vision_produces_issues(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         mock_llm = MagicMock()
         mock_llm.complete_json_with_vision.return_value = {
@@ -568,7 +568,7 @@ class TestWebRunnerJudge:
 
     @pytest.mark.asyncio
     async def test_judge_llm_failure_returns_empty(self):
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
 
         mock_llm = MagicMock()
         mock_llm.complete_json_with_vision.side_effect = Exception("API down")

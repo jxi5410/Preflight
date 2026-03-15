@@ -1,4 +1,4 @@
-# HumanQA
+# Preflight
 
 External-experience AI QA system. Evaluates shipped products like real users would — through the UI only, no code inspection — and produces evidence-backed findings plus repair briefs for coding agents (Claude Code, Codex, Cursor).
 
@@ -21,41 +21,41 @@ pip install -e ".[dev]"
 playwright install chromium
 
 # Quick check (~30s) — fast single-pass evaluation
-humanqa check https://your-product.com
-humanqa check https://your-product.com --focus "login flow" --json-output
+preflight check https://your-product.com
+preflight check https://your-product.com --focus "login flow" --json-output
 
 # Run against a URL
-humanqa run https://your-product.com
+preflight run https://your-product.com
 
 # With repo analysis
-humanqa run https://your-product.com --repo https://github.com/user/repo
+preflight run https://your-product.com --repo https://github.com/user/repo
 
 # With options
-humanqa run https://your-product.com \
+preflight run https://your-product.com \
   --brief "B2B SaaS dashboard for financial analytics" \
   --credentials '{"email": "test@example.com", "password": "test123"}' \
   --focus "onboarding,search,export" \
   --output ./my-report
 
 # Interactive mode (prompts for URL and repo)
-humanqa
+preflight
 
 # Generate handoff from existing run
-humanqa handoff ./artifacts --format claude-code
+preflight handoff ./artifacts --format claude-code
 
 # Compare runs for regressions
-humanqa compare ./baseline ./current
+preflight compare ./baseline ./current
 
 # Export issues to GitHub
-humanqa export-issues --repo user/repo --run ./artifacts
+preflight export-issues --repo user/repo --run ./artifacts
 
 # Schedule overnight runs
-humanqa schedule https://your-product.com --cron "0 2 * * *"
+preflight schedule https://your-product.com --cron "0 2 * * *"
 ```
 
 ## Configuration
 
-Create `humanqa.yaml` or pass options via CLI:
+Create `preflight.yaml` or pass options via CLI:
 
 ```yaml
 target:
@@ -98,7 +98,7 @@ HUMANQA_OUTPUT_DIR=./reports # Optional, default: ./artifacts
 
 ## MCP Server (Claude Code / AI Tool Integration)
 
-HumanQA exposes an MCP (Model Context Protocol) server so AI coding tools like Claude Code can use it as a tool.
+Preflight exposes an MCP (Model Context Protocol) server so AI coding tools like Claude Code can use it as a tool.
 
 ### Setup
 
@@ -107,8 +107,8 @@ Add to your Claude Code MCP configuration (`~/.claude/claude_desktop_config.json
 ```json
 {
   "mcpServers": {
-    "humanqa": {
-      "command": "humanqa-mcp",
+    "preflight": {
+      "command": "preflight-mcp",
       "env": {
         "GEMINI_API_KEY": "your-gemini-key"
       }
@@ -121,17 +121,17 @@ Add to your Claude Code MCP configuration (`~/.claude/claude_desktop_config.json
 
 | Tool | Description | Speed |
 |------|-------------|-------|
-| `humanqa_quick_check` | Fast single-pass evaluation | ~30s |
-| `humanqa_evaluate` | Full multi-agent QA pipeline | 2-5 min |
-| `humanqa_get_report` | Retrieve existing reports | Instant |
-| `humanqa_compare` | Compare runs for regressions | Instant |
+| `preflight_quick_check` | Fast single-pass evaluation | ~30s |
+| `preflight_evaluate` | Full multi-agent QA pipeline | 2-5 min |
+| `preflight_get_report` | Retrieve existing reports | Instant |
+| `preflight_compare` | Compare runs for regressions | Instant |
 
 ### Usage in Claude Code
 
 ```
 "Quick check my staging site at https://staging.myapp.com"
 "Run a full evaluation on https://myapp.com with repo https://github.com/org/myapp"
-"Show me the HumanQA report from the last run"
+"Show me the Preflight report from the last run"
 "Compare the current run against ./baseline for regressions"
 ```
 
@@ -140,7 +140,7 @@ See [HUMANQA_SKILL.md](HUMANQA_SKILL.md) for the full integration guide.
 ## Architecture
 
 ```
-humanqa/
+preflight/
 ├── core/
 │   ├── intent_modeler.py    # Infers product purpose from visible surfaces
 │   ├── persona_generator.py # Generates tailored user agent team

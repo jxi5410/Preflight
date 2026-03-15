@@ -8,20 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     FeatureExpectation,
     ProductIntentModel,
     RepoInsights,
     RunConfig,
 )
-from humanqa.core.repo_analyzer import (
+from preflight.core.repo_analyzer import (
     RepoAnalyzer,
     _find_routes,
     _parse_github_owner_repo,
     _parse_tech_stack_from_manifest,
     _read_config_hints,
 )
-from humanqa.core.intent_modeler import IntentModeler
+from preflight.core.intent_modeler import IntentModeler
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +257,8 @@ class TestRepoAnalyzerMocked:
             result.returncode = 0
             return result
 
-        with patch("humanqa.core.repo_analyzer.subprocess.run", side_effect=fake_clone), \
-             patch("humanqa.core.repo_analyzer._fetch_github_data", new_callable=AsyncMock) as mock_gh:
+        with patch("preflight.core.repo_analyzer.subprocess.run", side_effect=fake_clone), \
+             patch("preflight.core.repo_analyzer._fetch_github_data", new_callable=AsyncMock) as mock_gh:
             mock_gh.return_value = {
                 "recent_prs": ["Fix login bug", "Add dark mode"],
                 "open_issues": ["Performance issue on dashboard"],
@@ -285,7 +285,7 @@ class TestRepoAnalyzerMocked:
             result.stderr = "fatal: repo not found"
             return result
 
-        with patch("humanqa.core.repo_analyzer.subprocess.run", side_effect=fake_fail):
+        with patch("preflight.core.repo_analyzer.subprocess.run", side_effect=fake_fail):
             insights = await analyzer.analyze("https://github.com/user/missing")
 
         assert insights.product_name == "missing"

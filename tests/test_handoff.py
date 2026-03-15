@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     AgentPersona,
     CoverageEntry,
     CoverageMap,
@@ -167,7 +167,7 @@ class TestFileMapper:
     """Tests for core/file_mapper.py FileMapper class."""
 
     def test_class_interface(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         insights = _make_insights()
         mapper = FileMapper(insights)
@@ -176,14 +176,14 @@ class TestFileMapper:
         assert "/settings" in result
 
     def test_no_insights_returns_empty(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         mapper = FileMapper(None)
         issue = _make_issue("Broken settings", likely_product_area="settings")
         assert mapper.map_issue_to_files(issue) == []
 
     def test_override_insights(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         mapper = FileMapper(None)
         insights = _make_insights()
@@ -192,21 +192,21 @@ class TestFileMapper:
         assert "/dashboard" in result
 
     def test_product_area_matches_route(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         mapper = FileMapper(_make_insights())
         issue = _make_issue("Settings broken", likely_product_area="settings")
         assert "/settings" in mapper.map_issue_to_files(issue)
 
     def test_title_matches_route(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         mapper = FileMapper(_make_insights())
         issue = _make_issue("Dashboard loading slow", likely_product_area="")
         assert "/dashboard" in mapper.map_issue_to_files(issue)
 
     def test_repro_step_url_matches(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         mapper = FileMapper(_make_insights())
         issue = _make_issue(
@@ -217,7 +217,7 @@ class TestFileMapper:
         assert "/profile" in mapper.map_issue_to_files(issue)
 
     def test_deduplication(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         mapper = FileMapper(_make_insights())
         issue = _make_issue(
@@ -229,7 +229,7 @@ class TestFileMapper:
         assert result.count("/settings") == 1
 
     def test_caps_at_ten(self):
-        from humanqa.core.file_mapper import FileMapper
+        from preflight.core.file_mapper import FileMapper
 
         routes = [f"/page-{i}" for i in range(20)]
         mapper = FileMapper(_make_insights(routes_or_pages=routes))
@@ -240,7 +240,7 @@ class TestFileMapper:
         assert len(mapper.map_issue_to_files(issue)) <= 10
 
     def test_backward_compat_function(self):
-        from humanqa.core.file_mapper import map_issue_to_files
+        from preflight.core.file_mapper import map_issue_to_files
 
         issue = _make_issue("Settings broken", likely_product_area="settings")
         result = map_issue_to_files(issue, _make_insights())
@@ -255,7 +255,7 @@ class TestHandoffGenerator:
     """Tests for reporting/handoff.py matching HANDOFF_SPEC."""
 
     def test_generate_basic(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Critical bug", severity="critical"),
@@ -269,7 +269,7 @@ class TestHandoffGenerator:
         assert len(handoff.tasks) == 2
 
     def test_info_issues_skipped(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("FYI note", severity="info"),
@@ -281,7 +281,7 @@ class TestHandoffGenerator:
         assert handoff.tasks[0].title == "Real bug"
 
     def test_tasks_numbered_and_sorted_by_severity(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Low issue", severity="low"),
@@ -294,7 +294,7 @@ class TestHandoffGenerator:
         assert [t.severity for t in handoff.tasks] == ["critical", "high", "low"]
 
     def test_complexity_estimation(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Crit", severity="critical"),
@@ -311,7 +311,7 @@ class TestHandoffGenerator:
         assert complexities["Lo"] == "quick_fix"
 
     def test_total_estimated_hours(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Crit", severity="critical"),  # 3.0h
@@ -324,7 +324,7 @@ class TestHandoffGenerator:
         assert "hours" in handoff.total_estimated_hours
 
     def test_feature_gaps_spec_format(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Search is broken", severity="high",
@@ -344,7 +344,7 @@ class TestHandoffGenerator:
         assert "Export" not in features
 
     def test_feature_gap_ui_status(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Search fails", severity="high",
@@ -361,7 +361,7 @@ class TestHandoffGenerator:
         assert gap_map["Notifications"].ui_status == "not_found"
 
     def test_repo_info_in_handoff(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result()
         result.config.repo_url = "https://github.com/user/repo"
@@ -372,7 +372,7 @@ class TestHandoffGenerator:
         assert handoff.tech_stack == ["React", "Next.js", "Tailwind CSS"]
 
     def test_dependency_inference(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Checkout form broken", severity="critical",
@@ -391,7 +391,7 @@ class TestHandoffGenerator:
         assert task2.task_number in task1.blocks
 
     def test_generate_all_writes_files(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Bug A", severity="high", repair_brief="Fix A",
@@ -408,7 +408,7 @@ class TestHandoffGenerator:
         md_path = Path(paths["handoff_md"])
         assert md_path.exists()
         md = md_path.read_text()
-        assert "# HumanQA Handoff" in md
+        assert "# Preflight Handoff" in md
         assert "## Context" in md
         assert "## Summary" in md
         assert "## Task 1 of 2" in md
@@ -429,7 +429,7 @@ class TestHandoffGenerator:
         assert "dependency_graph" in data
 
     def test_markdown_spec_format(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Login broken", severity="critical",
@@ -446,7 +446,7 @@ class TestHandoffGenerator:
         paths = gen.generate_all(result, insights)
 
         md = Path(paths["handoff_md"]).read_text()
-        assert "# HumanQA Handoff — TestApp" in md
+        assert "# Preflight Handoff — TestApp" in md
         assert "Repo: https://github.com/user/repo" in md
         assert "Tech stack: React, Next.js, Tailwind CSS" in md
         assert "## Task 1 of 1 — CRITICAL" in md
@@ -459,10 +459,10 @@ class TestHandoffGenerator:
         assert "**Evidence:**" in md
         assert "**Complexity:** significant" in md
         assert "## Verification Checklist" in md
-        assert "humanqa run" in md
+        assert "preflight run" in md
 
     def test_json_spec_format(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Bug", severity="high"),
@@ -483,7 +483,7 @@ class TestHandoffGenerator:
         assert "dependency_graph" in data
 
     def test_dependency_notes_in_markdown(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("A", severity="critical", likely_product_area="checkout"),
@@ -496,7 +496,7 @@ class TestHandoffGenerator:
         assert "## Dependency Notes" in md
 
     def test_feature_gaps_in_markdown(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result()
         result.intent_model.feature_expectations = [
@@ -510,7 +510,7 @@ class TestHandoffGenerator:
         assert "not_found" in md
 
     def test_file_mapping_with_repo_insights(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Settings crash", severity="high",
@@ -529,24 +529,24 @@ class TestHandoffCLI:
     """Tests for CLI handoff command and --handoff flag."""
 
     def test_handoff_command_exists(self):
-        from humanqa.cli import main
+        from preflight.cli import main
         assert "handoff" in main.commands
 
     def test_handoff_command_has_format_option(self):
-        from humanqa.cli import main
+        from preflight.cli import main
         cmd = main.commands["handoff"]
         param_names = [p.name for p in cmd.params]
         assert "fmt" in param_names
 
     def test_run_command_has_handoff_option(self):
-        from humanqa.cli import main
+        from preflight.cli import main
         cmd = main.commands["run"]
         param_names = [p.name for p in cmd.params]
         assert "handoff_format" in param_names
 
     def test_handoff_command_generates_files(self, tmp_path):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         result = _make_run_result(issues=[
             _make_issue("Test bug", severity="high"),
@@ -563,7 +563,7 @@ class TestHandoffCLI:
 
     def test_handoff_command_with_format(self, tmp_path):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         result = _make_run_result(issues=[
             _make_issue("Bug", severity="medium"),
@@ -577,7 +577,7 @@ class TestHandoffCLI:
 
     def test_handoff_command_missing_dir(self):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         runner = CliRunner()
         res = runner.invoke(main, ["handoff", "/nonexistent/path"])
@@ -585,7 +585,7 @@ class TestHandoffCLI:
 
     def test_handoff_shows_scope(self, tmp_path):
         from click.testing import CliRunner
-        from humanqa.cli import main
+        from preflight.cli import main
 
         result = _make_run_result(issues=[
             _make_issue("Bug", severity="critical"),

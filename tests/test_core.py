@@ -1,8 +1,8 @@
-"""Tests for core HumanQA modules."""
+"""Tests for core Preflight modules."""
 
 import json
 import pytest
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     AgentPersona,
     CoverageMap,
     CoverageEntry,
@@ -124,8 +124,8 @@ class TestInstitutionalLensDecision:
     """Test institutional review triggering logic."""
 
     def test_auto_skips_none(self):
-        from humanqa.lenses.institutional_lens import InstitutionalLens
-        from humanqa.core.llm import LLMClient
+        from preflight.lenses.institutional_lens import InstitutionalLens
+        from preflight.core.llm import LLMClient
 
         # Can't instantiate real LLM without key, just test the should_run logic
         intent = ProductIntentModel(institutional_relevance=InstitutionalRelevance.none)

@@ -1,6 +1,6 @@
 # MCP Server & Quick-Check Mode Spec
 
-**Purpose:** Make HumanQA callable from inside any AI coding tool (Claude Code, Cursor, Codex) via MCP, and add a fast single-persona evaluation mode for mid-development spot checks.
+**Purpose:** Make Preflight callable from inside any AI coding tool (Claude Code, Cursor, Codex) via MCP, and add a fast single-persona evaluation mode for mid-development spot checks.
 
 ---
 
@@ -8,17 +8,17 @@
 
 ### What It Does
 
-HumanQA runs as an MCP (Model Context Protocol) server that AI coding tools can discover and call. When a developer inside Claude Code says "check my deploy" or "run humanqa on staging", the coding tool calls HumanQA's MCP tools directly. No context switching, no separate terminal.
+Preflight runs as an MCP (Model Context Protocol) server that AI coding tools can discover and call. When a developer inside Claude Code says "check my deploy" or "run preflight on staging", the coding tool calls Preflight's MCP tools directly. No context switching, no separate terminal.
 
 ### MCP Tools to Expose
 
-#### Tool 1: `humanqa_evaluate`
-Full evaluation run. This is the same as `humanqa run` but callable from any MCP client.
+#### Tool 1: `preflight_evaluate`
+Full evaluation run. This is the same as `preflight run` but callable from any MCP client.
 
 ```json
 {
-  "name": "humanqa_evaluate",
-  "description": "Run a full HumanQA evaluation against a product URL. Analyzes the repo for product understanding, generates realistic user personas, evaluates the product through the UI, and returns prioritized findings with evidence.",
+  "name": "preflight_evaluate",
+  "description": "Run a full Preflight evaluation against a product URL. Analyzes the repo for product understanding, generates realistic user personas, evaluates the product through the UI, and returns prioritized findings with evidence.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -35,12 +35,12 @@ Full evaluation run. This is the same as `humanqa run` but callable from any MCP
 
 Returns: Full report summary + issue list + handoff tasks as structured JSON.
 
-#### Tool 2: `humanqa_quick_check`
+#### Tool 2: `preflight_quick_check`
 Fast single-persona evaluation. Takes < 2 minutes. For mid-development "does this look right?" checks.
 
 ```json
 {
-  "name": "humanqa_quick_check",
+  "name": "preflight_quick_check",
   "description": "Quick single-persona evaluation of a URL. Fast spot check (~1-2 minutes) for mid-development use. Checks basic functionality, visual quality, and common-sense issues.",
   "inputSchema": {
     "type": "object",
@@ -56,13 +56,13 @@ Fast single-persona evaluation. Takes < 2 minutes. For mid-development "does thi
 
 Returns: 3-5 quick findings with screenshots, no full report.
 
-#### Tool 3: `humanqa_get_report`
+#### Tool 3: `preflight_get_report`
 Retrieve the latest report or a specific run's report.
 
 ```json
 {
-  "name": "humanqa_get_report",
-  "description": "Get the latest HumanQA evaluation report, or a specific run's report.",
+  "name": "preflight_get_report",
+  "description": "Get the latest Preflight evaluation report, or a specific run's report.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -73,13 +73,13 @@ Retrieve the latest report or a specific run's report.
 }
 ```
 
-#### Tool 4: `humanqa_compare`
+#### Tool 4: `preflight_compare`
 Compare two runs to see what changed.
 
 ```json
 {
-  "name": "humanqa_compare",
-  "description": "Compare two HumanQA runs. Shows new issues, resolved issues, and regressions.",
+  "name": "preflight_compare",
+  "description": "Compare two Preflight runs. Shows new issues, resolved issues, and regressions.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -93,7 +93,7 @@ Compare two runs to see what changed.
 
 ### Implementation
 
-#### File: `humanqa/mcp_server.py`
+#### File: `preflight/mcp_server.py`
 
 Use the `mcp` Python SDK (https://github.com/modelcontextprotocol/python-sdk).
 
@@ -102,22 +102,22 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-server = Server("humanqa")
+server = Server("preflight")
 
 @server.list_tools()
 async def list_tools():
     return [
-        Tool(name="humanqa_evaluate", description="...", inputSchema={...}),
-        Tool(name="humanqa_quick_check", description="...", inputSchema={...}),
-        Tool(name="humanqa_get_report", description="...", inputSchema={...}),
-        Tool(name="humanqa_compare", description="...", inputSchema={...}),
+        Tool(name="preflight_evaluate", description="...", inputSchema={...}),
+        Tool(name="preflight_quick_check", description="...", inputSchema={...}),
+        Tool(name="preflight_get_report", description="...", inputSchema={...}),
+        Tool(name="preflight_compare", description="...", inputSchema={...}),
     ]
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict):
-    if name == "humanqa_evaluate":
+    if name == "preflight_evaluate":
         return await handle_evaluate(arguments)
-    elif name == "humanqa_quick_check":
+    elif name == "preflight_quick_check":
         return await handle_quick_check(arguments)
     # ... etc
 
@@ -133,9 +133,9 @@ For Claude Code, the user adds to their Claude Code MCP config:
 ```json
 {
   "mcpServers": {
-    "humanqa": {
+    "preflight": {
       "command": "python3",
-      "args": ["-m", "humanqa.mcp_server"],
+      "args": ["-m", "preflight.mcp_server"],
       "env": {
         "GOOGLE_API_KEY": "..."
       }
@@ -149,13 +149,13 @@ For Cursor, similar MCP config in Cursor settings.
 Then inside their coding session:
 ```
 > Check my staging deploy at https://staging.myapp.com
-(Claude Code calls humanqa_quick_check automatically)
+(Claude Code calls preflight_quick_check automatically)
 
 > Run a full evaluation with repo context
-(Claude Code calls humanqa_evaluate with the repo URL)
+(Claude Code calls preflight_evaluate with the repo URL)
 
 > What changed since last run?
-(Claude Code calls humanqa_compare)
+(Claude Code calls preflight_compare)
 ```
 
 ### Dependencies
@@ -169,10 +169,10 @@ Add to `pyproject.toml`:
 
 Add to `pyproject.toml` scripts:
 ```
-humanqa-mcp = "humanqa.mcp_server:main"
+preflight-mcp = "preflight.mcp_server:main"
 ```
 
-Also support: `python3 -m humanqa.mcp_server`
+Also support: `python3 -m preflight.mcp_server`
 
 ---
 
@@ -197,7 +197,7 @@ A fast, lightweight evaluation that takes < 2 minutes. One persona, one viewport
 
 ### Implementation
 
-#### File: `humanqa/core/quick_check.py`
+#### File: `preflight/core/quick_check.py`
 
 ```python
 async def quick_check(
@@ -249,9 +249,9 @@ class QuickFinding(BaseModel):
 
 ```bash
 # Quick check via CLI
-humanqa check https://staging.myapp.com
-humanqa check https://staging.myapp.com --focus "login page"
-humanqa check https://staging.myapp.com --mobile
+preflight check https://staging.myapp.com
+preflight check https://staging.myapp.com --focus "login page"
+preflight check https://staging.myapp.com --mobile
 
 # Short output, not a full report:
 # 
@@ -269,10 +269,10 @@ humanqa check https://staging.myapp.com --mobile
 
 #### Interactive Mode
 
-When the user runs `humanqa` with no args, after the full evaluation option, also offer quick check:
+When the user runs `preflight` with no args, after the full evaluation option, also offer quick check:
 
 ```
-Welcome to HumanQA — your team of AI QA companions
+Welcome to Preflight — your team of AI QA companions
 
 What would you like to do?
   1. Full evaluation — comprehensive multi-persona review
@@ -287,12 +287,12 @@ Choose [1-2]:
 
 ### File: `HUMANQA_SKILL.md`
 
-This file can be placed in a project's `.claude/` directory or referenced as a skill. It teaches Claude Code about HumanQA and when/how to use it.
+This file can be placed in a project's `.claude/` directory or referenced as a skill. It teaches Claude Code about Preflight and when/how to use it.
 
 ```markdown
-# HumanQA Skill
+# Preflight Skill
 
-HumanQA is a QA companion that evaluates products through the UI like real users would.
+Preflight is a QA companion that evaluates products through the UI like real users would.
 
 ## When to Use
 - After deploying changes: "check my staging deploy"
@@ -301,13 +301,13 @@ HumanQA is a QA companion that evaluates products through the UI like real users
 - To compare runs: "what changed since last evaluation?"
 
 ## Available Tools (via MCP)
-- humanqa_quick_check: Fast 1-2 minute spot check
-- humanqa_evaluate: Full multi-persona evaluation (5-15 min)
-- humanqa_get_report: Retrieve latest findings
-- humanqa_compare: Diff between runs
+- preflight_quick_check: Fast 1-2 minute spot check
+- preflight_evaluate: Full multi-persona evaluation (5-15 min)
+- preflight_get_report: Retrieve latest findings
+- preflight_compare: Diff between runs
 
 ## Usage Patterns
-For quick checks, prefer humanqa_quick_check. Only use humanqa_evaluate for milestone reviews.
+For quick checks, prefer preflight_quick_check. Only use preflight_evaluate for milestone reviews.
 When presenting results, format as actionable tasks the developer can address.
 If the developer says "fix these", generate implementation code based on the handoff tasks.
 ```
@@ -316,15 +316,15 @@ If the developer says "fix these", generate implementation code based on the han
 
 ## Build Order
 
-1. `humanqa/core/quick_check.py` — QuickCheckResult schema + quick_check function
-2. CLI `humanqa check` command
+1. `preflight/core/quick_check.py` — QuickCheckResult schema + quick_check function
+2. CLI `preflight check` command
 3. Update interactive mode with quick check option
-4. `humanqa/mcp_server.py` — MCP server with all 4 tools
-5. Wire quick_check into MCP `humanqa_quick_check` tool
-6. Wire full pipeline into MCP `humanqa_evaluate` tool  
-7. Wire report retrieval into MCP `humanqa_get_report` tool
-8. Wire comparison into MCP `humanqa_compare` tool
-9. Add `humanqa-mcp` entry point to pyproject.toml
+4. `preflight/mcp_server.py` — MCP server with all 4 tools
+5. Wire quick_check into MCP `preflight_quick_check` tool
+6. Wire full pipeline into MCP `preflight_evaluate` tool  
+7. Wire report retrieval into MCP `preflight_get_report` tool
+8. Wire comparison into MCP `preflight_compare` tool
+9. Add `preflight-mcp` entry point to pyproject.toml
 10. Create `HUMANQA_SKILL.md` for Claude Code integration
 11. Add MCP config example to README
 12. Tests for quick_check and MCP server

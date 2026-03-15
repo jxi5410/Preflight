@@ -1,4 +1,4 @@
-# HumanQA Refinement Spec — Report Quality & Handoff UX
+# Preflight Refinement Spec — Report Quality & Handoff UX
 
 **Context:** First real-world run against LondonAI.network produced 140 issues. Many duplicates, weak evidence references, generic scores. This spec addresses the quality issues.
 
@@ -181,7 +181,7 @@ Run took too long without progress feedback. Even with the new progress tracker,
 ## 8. Login / Auth Flow Evaluation (Without Credentials)
 
 ### Problem
-HumanQA skipped the login page entirely because no credentials were provided. A real first-time user would encounter the login/signup page and evaluate it as a product surface — is it clear, trustworthy, functional? This is a high-priority evaluation that was completely missed.
+Preflight skipped the login page entirely because no credentials were provided. A real first-time user would encounter the login/signup page and evaluate it as a product surface — is it clear, trustworthy, functional? This is a high-priority evaluation that was completely missed.
 
 ### Fix
 
@@ -217,7 +217,7 @@ The first-time user's natural flow is: land on homepage → look for signup/logi
 ## 9. Mobile Responsiveness & Visual Layout Evaluation
 
 ### Problem
-HumanQA missed critical mobile layout issues: content cut off, misalignment, information failing to show. The mobile evaluation only changes the viewport size but doesn't specifically check for responsive design problems. The evaluation prompts don't consistently send screenshots via vision for mobile, so visual-only problems (overflow, truncation, overlap) are invisible.
+Preflight missed critical mobile layout issues: content cut off, misalignment, information failing to show. The mobile evaluation only changes the viewport size but doesn't specifically check for responsive design problems. The evaluation prompts don't consistently send screenshots via vision for mobile, so visual-only problems (overflow, truncation, overlap) are invisible.
 
 ### Fix
 
@@ -284,7 +284,7 @@ The design lens currently reviews artifacts generically. It must specifically re
 ## 10. Multi-Provider Tiered Model Support
 
 ### Problem
-Running HumanQA entirely on Claude Sonnet 4.6 ($3/$15 per 1M tokens) is expensive. A single run with 40+ LLM calls costs $3-5. Most of those calls don't need frontier-tier quality — per-page evaluations, action planning, and screenshot analysis can use a cheaper model. Only high-judgment steps (intent modeling, persona generation, final dedup, report narrative) benefit from the best model.
+Running Preflight entirely on Claude Sonnet 4.6 ($3/$15 per 1M tokens) is expensive. A single run with 40+ LLM calls costs $3-5. Most of those calls don't need frontier-tier quality — per-page evaluations, action planning, and screenshot analysis can use a cheaper model. Only high-judgment steps (intent modeling, persona generation, final dedup, report narrative) benefit from the best model.
 
 ### Architecture: Tiered Model Routing
 
@@ -414,13 +414,13 @@ Tag every LLM call in the codebase with the appropriate tier:
 
 ```bash
 # Use presets
-humanqa run https://example.com --tier balanced    # Default: Gemini Flash + 3.1 Pro
-humanqa run https://example.com --tier budget      # Cheapest: all Gemini Flash
-humanqa run https://example.com --tier premium     # Best: Claude Sonnet + Opus
-humanqa run https://example.com --tier openai      # OpenAI: GPT-4.1 + GPT-5.4
+preflight run https://example.com --tier balanced    # Default: Gemini Flash + 3.1 Pro
+preflight run https://example.com --tier budget      # Cheapest: all Gemini Flash
+preflight run https://example.com --tier premium     # Best: Claude Sonnet + Opus
+preflight run https://example.com --tier openai      # OpenAI: GPT-4.1 + GPT-5.4
 
 # Or specify models directly
-humanqa run https://example.com --fast-model gemini-3-flash --smart-model gemini-3.1-pro-preview
+preflight run https://example.com --fast-model gemini-3-flash --smart-model gemini-3.1-pro-preview
 
 # In interactive mode, ask the user
 # "Which quality tier? [balanced/budget/premium/openai]"

@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from humanqa.core.orchestrator import (
+from preflight.core.orchestrator import (
     COMPARATIVE_SYSTEM_PROMPT,
     DEDUP_SYSTEM_PROMPT,
     Orchestrator,
 )
-from humanqa.core.performance import (
+from preflight.core.performance import (
     PerformanceResult,
     classify_product_type,
     evaluate_snapshot_performance,
@@ -18,7 +18,7 @@ from humanqa.core.performance import (
     performance_results_to_issues,
     summarize_performance,
 )
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     AgentPersona,
     CoverageMap,
     CoverageEntry,
@@ -542,18 +542,18 @@ class TestPromptQuality:
         assert "convergence_count" in COMPARATIVE_SYSTEM_PROMPT
 
     def test_web_runner_prompt_requires_evidence(self):
-        from humanqa.runners.web_runner import EVALUATION_SYSTEM_PROMPT
+        from preflight.runners.web_runner import EVALUATION_SYSTEM_PROMPT
         assert "EVIDENCE ANCHORING" in EVALUATION_SYSTEM_PROMPT
         assert "rejected" in EVALUATION_SYSTEM_PROMPT
         assert "Screenshot reference" in EVALUATION_SYSTEM_PROMPT
         assert "Observed absence" in EVALUATION_SYSTEM_PROMPT
 
     def test_design_lens_prompt_requires_evidence(self):
-        from humanqa.lenses.design_lens import DESIGN_REVIEW_SYSTEM
+        from preflight.lenses.design_lens import DESIGN_REVIEW_SYSTEM
         assert "EVIDENCE ANCHORING" in DESIGN_REVIEW_SYSTEM
         assert "rejected" in DESIGN_REVIEW_SYSTEM
 
     def test_institutional_lens_prompt_requires_evidence(self):
-        from humanqa.lenses.institutional_lens import INSTITUTIONAL_SYSTEM
+        from preflight.lenses.institutional_lens import INSTITUTIONAL_SYSTEM
         assert "EVIDENCE ANCHORING" in INSTITUTIONAL_SYSTEM
         assert "rejected" in INSTITUTIONAL_SYSTEM

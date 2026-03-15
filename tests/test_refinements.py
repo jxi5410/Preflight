@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from humanqa.core.schemas import (
+from preflight.core.schemas import (
     AgentPersona,
     CoverageEntry,
     CoverageMap,
@@ -171,7 +171,7 @@ class TestIssueGroup:
         assert issue.error_signature == "functional:login:broken|button"
 
     def test_group_issues_creates_groups(self):
-        from humanqa.core.orchestrator import group_issues
+        from preflight.core.orchestrator import group_issues
 
         issues = [
             _make_issue("Bug A", category="ux", likely_product_area="checkout"),
@@ -190,12 +190,12 @@ class TestIssueGroup:
         assert issues[2].group_id == ""
 
     def test_group_issues_empty(self):
-        from humanqa.core.orchestrator import group_issues
+        from preflight.core.orchestrator import group_issues
 
         assert group_issues([]) == []
 
     def test_group_issues_no_duplicates(self):
-        from humanqa.core.orchestrator import group_issues
+        from preflight.core.orchestrator import group_issues
 
         issues = [
             _make_issue("A", category="ux", likely_product_area="a"),
@@ -219,7 +219,7 @@ class TestErrorSignatureDedup:
     """Tests for error signature computation and signature-based dedup."""
 
     def test_compute_error_signature(self):
-        from humanqa.core.orchestrator import compute_error_signature
+        from preflight.core.orchestrator import compute_error_signature
 
         issue = _make_issue(
             "Submit button broken on checkout",
@@ -233,21 +233,21 @@ class TestErrorSignatureDedup:
         assert "checkout" in sig
 
     def test_same_issue_same_signature(self):
-        from humanqa.core.orchestrator import compute_error_signature
+        from preflight.core.orchestrator import compute_error_signature
 
         issue1 = _make_issue("Button broken", category="ux", likely_product_area="login")
         issue2 = _make_issue("Button broken", category="ux", likely_product_area="login")
         assert compute_error_signature(issue1) == compute_error_signature(issue2)
 
     def test_different_category_different_signature(self):
-        from humanqa.core.orchestrator import compute_error_signature
+        from preflight.core.orchestrator import compute_error_signature
 
         issue1 = _make_issue("Broken button", category="ux", likely_product_area="login")
         issue2 = _make_issue("Broken button", category="functional", likely_product_area="login")
         assert compute_error_signature(issue1) != compute_error_signature(issue2)
 
     def test_signature_dedup(self):
-        from humanqa.core.orchestrator import Orchestrator
+        from preflight.core.orchestrator import Orchestrator
 
         issues = [
             _make_issue("Bug A", error_signature="sig1", agent="agent1", confidence=0.8),
@@ -262,7 +262,7 @@ class TestErrorSignatureDedup:
         assert "Also reported by agent: agent1" in sig1_issue.observed_facts
 
     def test_signature_dedup_no_sig(self):
-        from humanqa.core.orchestrator import Orchestrator
+        from preflight.core.orchestrator import Orchestrator
 
         issues = [
             _make_issue("Bug A", agent="a"),
@@ -281,43 +281,43 @@ class TestAdaptiveScoring:
     """Tests for product-type-aware performance budgets."""
 
     def test_classify_saas(self):
-        from humanqa.core.performance import classify_product_type
+        from preflight.core.performance import classify_product_type
 
         assert classify_product_type("SaaS Dashboard") == "saas_app"
         assert classify_product_type("analytics platform") == "saas_app"
 
     def test_classify_marketing(self):
-        from humanqa.core.performance import classify_product_type
+        from preflight.core.performance import classify_product_type
 
         assert classify_product_type("Landing Page") == "marketing_site"
         assert classify_product_type("marketing website") == "marketing_site"
 
     def test_classify_ecommerce(self):
-        from humanqa.core.performance import classify_product_type
+        from preflight.core.performance import classify_product_type
 
         assert classify_product_type("ecommerce platform") == "ecommerce"
         assert classify_product_type("online store") == "ecommerce"
         assert classify_product_type("marketplace") == "ecommerce"
 
     def test_classify_content(self):
-        from humanqa.core.performance import classify_product_type
+        from preflight.core.performance import classify_product_type
 
         assert classify_product_type("documentation site") == "content_site"
         assert classify_product_type("blog") == "content_site"
         assert classify_product_type("wiki") == "content_site"
 
     def test_classify_mobile(self):
-        from humanqa.core.performance import classify_product_type
+        from preflight.core.performance import classify_product_type
 
         assert classify_product_type("mobile web app") == "mobile_web"
 
     def test_classify_default(self):
-        from humanqa.core.performance import classify_product_type
+        from preflight.core.performance import classify_product_type
 
         assert classify_product_type("unknown thing") == "default"
 
     def test_ecommerce_budget_stricter_cls(self):
-        from humanqa.core.performance import BUDGETS
+        from preflight.core.performance import BUDGETS
 
         ecom = BUDGETS["ecommerce"]
         default = BUDGETS["default"]
@@ -325,21 +325,21 @@ class TestAdaptiveScoring:
         assert ecom["cls_score"][1] < default["cls_score"][1]
 
     def test_content_budget_tighter_lcp(self):
-        from humanqa.core.performance import BUDGETS
+        from preflight.core.performance import BUDGETS
 
         content = BUDGETS["content_site"]
         default = BUDGETS["default"]
         assert content["lcp_ms"][0] < default["lcp_ms"][0]
 
     def test_score_explanation_includes_category(self):
-        from humanqa.core.performance import score_explanation
+        from preflight.core.performance import score_explanation
 
         explanation = score_explanation("SaaS Dashboard")
         assert "saas_app" in explanation
         assert "SaaS" in explanation
 
     def test_score_explanation_default(self):
-        from humanqa.core.performance import score_explanation
+        from preflight.core.performance import score_explanation
 
         explanation = score_explanation("unknown product")
         assert "default" in explanation.lower()
@@ -353,7 +353,7 @@ class TestHTMLReportImprovements:
     """Tests for HTML report clickable cards, inline screenshots, search."""
 
     def test_html_has_search_bar(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[_make_issue("Bug")])
@@ -363,7 +363,7 @@ class TestHTMLReportImprovements:
         assert "Search issues" in html
 
     def test_html_has_clickable_cards(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[_make_issue("Bug", severity="critical")])
@@ -373,7 +373,7 @@ class TestHTMLReportImprovements:
         assert "onclick" in html
 
     def test_html_has_screenshot_gallery(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         ev = Evidence(
@@ -389,7 +389,7 @@ class TestHTMLReportImprovements:
         assert "screenshot-caption" in html
 
     def test_html_has_score_explanations(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(
@@ -401,7 +401,7 @@ class TestHTMLReportImprovements:
         assert "score-explanation" in html
 
     def test_html_has_group_chips(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(
@@ -414,7 +414,7 @@ class TestHTMLReportImprovements:
         assert "UX in checkout" in html
 
     def test_html_lightbox_has_caption(self, tmp_path):
-        from humanqa.reporting.report_generator import ReportGenerator
+        from preflight.reporting.report_generator import ReportGenerator
 
         gen = ReportGenerator(output_dir=str(tmp_path))
         result = _make_run_result(issues=[_make_issue("Bug")])
@@ -487,7 +487,7 @@ class TestHandoffFixOptions:
         assert len(task.fix_options) == 2
 
     def test_handoff_generates_fix_options(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Critical bug", severity="critical"),
@@ -498,7 +498,7 @@ class TestHandoffFixOptions:
         assert len(handoff.tasks[0].fix_options) >= 2
 
     def test_handoff_fix_options_in_markdown(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Big bug", severity="critical"),
@@ -509,7 +509,7 @@ class TestHandoffFixOptions:
         assert "Fix options" in md
 
     def test_handoff_fix_options_in_json(self, tmp_path):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Bug", severity="high"),
@@ -521,7 +521,7 @@ class TestHandoffFixOptions:
         assert len(data["tasks"][0]["fix_options"]) >= 1
 
     def test_accessibility_gets_aria_option(self):
-        from humanqa.reporting.handoff import HandoffGenerator
+        from preflight.reporting.handoff import HandoffGenerator
 
         result = _make_run_result(issues=[
             _make_issue("Missing alt text", severity="medium", category="accessibility"),
@@ -544,7 +544,7 @@ class TestAuthLens:
 
     def test_auth_lens_no_auth_pages(self):
         """Auth lens should return empty when no auth pages found."""
-        from humanqa.lenses.auth_lens import AuthLens
+        from preflight.lenses.auth_lens import AuthLens
 
         mock_llm = MagicMock()
         lens = AuthLens(mock_llm)
@@ -556,7 +556,7 @@ class TestAuthLens:
 
     def test_auth_lens_detects_auth_urls(self):
         """Auth lens should detect login-related URLs in coverage."""
-        from humanqa.lenses.auth_lens import AuthLens
+        from preflight.lenses.auth_lens import AuthLens
 
         mock_llm = MagicMock()
         mock_llm.complete_json.return_value = {
@@ -585,7 +585,7 @@ class TestAuthLens:
         assert issues[0].agent == "auth_lens"
 
     def test_auth_lens_handles_llm_failure(self):
-        from humanqa.lenses.auth_lens import AuthLens
+        from preflight.lenses.auth_lens import AuthLens
 
         mock_llm = MagicMock()
         mock_llm.complete_json.side_effect = Exception("LLM error")
@@ -613,7 +613,7 @@ class TestResponsiveLens:
 
     def test_responsive_lens_flags_missing_mobile(self):
         """Should flag when no mobile evaluation was performed."""
-        from humanqa.lenses.responsive_lens import ResponsiveLens
+        from preflight.lenses.responsive_lens import ResponsiveLens
 
         mock_llm = MagicMock()
         mock_llm.complete_json.return_value = {
@@ -635,7 +635,7 @@ class TestResponsiveLens:
         assert score <= 0.3
 
     def test_responsive_lens_with_mobile_data(self):
-        from humanqa.lenses.responsive_lens import ResponsiveLens
+        from preflight.lenses.responsive_lens import ResponsiveLens
 
         mock_llm = MagicMock()
         mock_llm.complete_json.return_value = {
@@ -664,7 +664,7 @@ class TestResponsiveLens:
         assert score == 0.7
 
     def test_responsive_lens_handles_llm_failure(self):
-        from humanqa.lenses.responsive_lens import ResponsiveLens
+        from preflight.lenses.responsive_lens import ResponsiveLens
 
         mock_llm = MagicMock()
         mock_llm.complete_json.side_effect = Exception("LLM error")
@@ -680,7 +680,7 @@ class TestResponsiveLens:
         assert score == 0.5
 
     def test_responsive_empty_issues_returns_1(self):
-        from humanqa.lenses.responsive_lens import ResponsiveLens
+        from preflight.lenses.responsive_lens import ResponsiveLens
 
         mock_llm = MagicMock()
         lens = ResponsiveLens(mock_llm)
@@ -700,7 +700,7 @@ class TestRunTimeOptimizations:
     """Tests for timeouts, caps, and parallelization constants."""
 
     def test_step_timeouts_defined(self):
-        from humanqa.core.pipeline import STEP_TIMEOUT_SECONDS
+        from preflight.core.pipeline import STEP_TIMEOUT_SECONDS
 
         assert "repo" in STEP_TIMEOUT_SECONDS
         assert "scrape" in STEP_TIMEOUT_SECONDS
@@ -710,32 +710,32 @@ class TestRunTimeOptimizations:
         assert STEP_TIMEOUT_SECONDS["evaluate"] >= STEP_TIMEOUT_SECONDS["lenses"]
 
     def test_max_agents_cap(self):
-        from humanqa.core.pipeline import MAX_AGENTS
+        from preflight.core.pipeline import MAX_AGENTS
 
         assert MAX_AGENTS >= 4
         assert MAX_AGENTS <= 10
 
     def test_max_journeys_cap(self):
-        from humanqa.core.pipeline import MAX_JOURNEYS_PER_AGENT
+        from preflight.core.pipeline import MAX_JOURNEYS_PER_AGENT
 
         assert MAX_JOURNEYS_PER_AGENT >= 2
         assert MAX_JOURNEYS_PER_AGENT <= 5
 
     def test_default_max_steps_reduced(self):
-        from humanqa.runners.web_runner import DEFAULT_MAX_STEPS
+        from preflight.runners.web_runner import DEFAULT_MAX_STEPS
 
         assert DEFAULT_MAX_STEPS <= 10
         assert DEFAULT_MAX_STEPS >= 5
 
     def test_page_navigation_timeout(self):
-        from humanqa.runners.web_runner import PAGE_NAVIGATION_TIMEOUT_MS
+        from preflight.runners.web_runner import PAGE_NAVIGATION_TIMEOUT_MS
 
         assert PAGE_NAVIGATION_TIMEOUT_MS <= 30000
         assert PAGE_NAVIGATION_TIMEOUT_MS >= 10000
 
     def test_with_timeout_returns_none_on_timeout(self):
         import asyncio
-        from humanqa.core.pipeline import _with_timeout
+        from preflight.core.pipeline import _with_timeout
 
         async def slow_task():
             await asyncio.sleep(10)
@@ -748,7 +748,7 @@ class TestRunTimeOptimizations:
 
     def test_with_timeout_returns_result_on_success(self):
         import asyncio
-        from humanqa.core.pipeline import _with_timeout
+        from preflight.core.pipeline import _with_timeout
 
         async def fast_task():
             return "done"
@@ -767,7 +767,7 @@ class TestTieredModelSupport:
     """Tests for multi-provider tiered model configuration."""
 
     def test_tier_presets_exist(self):
-        from humanqa.core.llm import TIER_PRESETS
+        from preflight.core.llm import TIER_PRESETS
 
         assert "balanced" in TIER_PRESETS
         assert "budget" in TIER_PRESETS
@@ -775,7 +775,7 @@ class TestTieredModelSupport:
         assert "openai" in TIER_PRESETS
 
     def test_balanced_uses_gemini(self):
-        from humanqa.core.llm import get_tier_config
+        from preflight.core.llm import get_tier_config
 
         provider, models = get_tier_config("balanced")
         assert provider == "gemini"
@@ -783,7 +783,7 @@ class TestTieredModelSupport:
         assert "gemini" in models.smart
 
     def test_budget_uses_flash_lite(self):
-        from humanqa.core.llm import get_tier_config
+        from preflight.core.llm import get_tier_config
 
         provider, models = get_tier_config("budget")
         assert provider == "gemini"
@@ -791,14 +791,14 @@ class TestTieredModelSupport:
         assert models.smart == "gemini-3-flash"
 
     def test_premium_uses_claude(self):
-        from humanqa.core.llm import get_tier_config
+        from preflight.core.llm import get_tier_config
 
         provider, models = get_tier_config("premium")
         assert provider == "anthropic"
         assert "claude" in models.smart
 
     def test_openai_tier(self):
-        from humanqa.core.llm import get_tier_config
+        from preflight.core.llm import get_tier_config
 
         provider, models = get_tier_config("openai")
         assert provider == "openai"
@@ -806,18 +806,18 @@ class TestTieredModelSupport:
         assert models.smart == "gpt-5.4"
 
     def test_invalid_tier_raises(self):
-        from humanqa.core.llm import get_tier_config
+        from preflight.core.llm import get_tier_config
 
         with pytest.raises(ValueError, match="Unknown tier"):
             get_tier_config("nonexistent")
 
     def test_default_tier_is_balanced(self):
-        from humanqa.core.llm import DEFAULT_TIER
+        from preflight.core.llm import DEFAULT_TIER
 
         assert DEFAULT_TIER == "balanced"
 
     def test_llm_client_with_tier_balanced(self):
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         client = LLMClient(tier="balanced")
         assert client.provider == "gemini"
@@ -826,14 +826,14 @@ class TestTieredModelSupport:
         assert client._resolve_model("smart") == "gemini-2.0-flash"
 
     def test_llm_client_with_tier_premium(self):
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         client = LLMClient(tier="premium")
         assert client.provider == "anthropic"
         assert "claude" in client.model
 
     def test_llm_client_model_override_with_tier(self):
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         client = LLMClient(tier="balanced", model="custom-model")
         # Model override should apply to both tiers
@@ -841,7 +841,7 @@ class TestTieredModelSupport:
         assert client._resolve_model("smart") == "custom-model"
 
     def test_llm_client_without_tier(self):
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         # No tier, explicit provider — should work like before
         client = LLMClient(provider="gemini")
@@ -852,7 +852,7 @@ class TestTieredModelSupport:
     def test_gemini_deferred_init_without_key(self):
         """Gemini client should defer init when no API key is set."""
         import os
-        from humanqa.core.llm import LLMClient
+        from preflight.core.llm import LLMClient
 
         # Ensure no Gemini key
         old_keys = {}
@@ -884,13 +884,13 @@ class TestTieredModelSupport:
         assert config.llm_tier == "premium"
 
     def test_cli_has_tier_option(self):
-        from humanqa.cli import main
+        from preflight.cli import main
         cmd = main.commands["run"]
         param_names = [p.name for p in cmd.params]
         assert "tier" in param_names
 
     def test_cli_tier_choices(self):
-        from humanqa.cli import main
+        from preflight.cli import main
         cmd = main.commands["run"]
         tier_param = [p for p in cmd.params if p.name == "tier"][0]
         assert "balanced" in tier_param.type.choices
@@ -900,14 +900,14 @@ class TestTieredModelSupport:
 
     def test_fast_tier_tagged_in_orchestrator(self):
         """Verify orchestrator dedup calls use fast tier."""
-        from humanqa.core.orchestrator import Orchestrator
+        from preflight.core.orchestrator import Orchestrator
         import inspect
 
         source = inspect.getsource(Orchestrator._deduplicate_with_llm)
         assert 'tier="fast"' in source
 
     def test_fast_tier_tagged_in_persona_generator(self):
-        from humanqa.core.persona_generator import PersonaGenerator
+        from preflight.core.persona_generator import PersonaGenerator
         import inspect
 
         source = inspect.getsource(PersonaGenerator.generate_personas)
@@ -915,7 +915,7 @@ class TestTieredModelSupport:
 
     def test_smart_tier_default_in_web_runner(self):
         """Web runner vision calls should NOT have tier='fast'."""
-        from humanqa.runners.web_runner import WebRunner
+        from preflight.runners.web_runner import WebRunner
         import inspect
 
         source = inspect.getsource(WebRunner._judge_snapshot)
