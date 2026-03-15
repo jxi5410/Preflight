@@ -224,15 +224,19 @@ Return 0-15 issues, prioritized by severity."""
         images = []
         if desktop_screenshot:
             images.append((desktop_screenshot, "image/png"))
+            logger.info("Desktop screenshot captured: %d bytes", len(desktop_screenshot))
         if mobile_screenshot:
             images.append((mobile_screenshot, "image/png"))
+            logger.info("Mobile screenshot captured: %d bytes", len(mobile_screenshot))
 
         if images:
+            logger.info("Sending %d screenshots to LLM via vision...", len(images))
             data = llm.complete_json_with_vision(
                 vision_prompt, images=images, tier="fast"
             )
+            logger.info("Vision evaluation complete, %d issues found", len(data.get("issues", [])))
         else:
-            # Fallback to text-only if screenshots failed
+            logger.warning("No screenshots captured — falling back to text-only evaluation")
             data = llm.complete_json(vision_prompt, tier="fast")
 
     except Exception as e:

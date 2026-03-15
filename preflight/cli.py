@@ -397,6 +397,30 @@ def check(url: str, focus: str | None, tier: str, json_out: bool, verbose: bool)
     if result.summary:
         console.print(f"\n  [dim]{result.summary}[/dim]")
 
+    # Generate ready-to-paste prompt for coding LLMs
+    if result.issues:
+        high_priority = [i for i in result.issues if i.severity in ("critical", "high")]
+        if not high_priority:
+            high_priority = result.issues[:5]
+
+        issue_lines = []
+        for i, issue in enumerate(high_priority, 1):
+            line = f"{i}. [{issue.severity.upper()}] {issue.title}"
+            if issue.user_impact:
+                line += f" — {issue.user_impact}"
+            issue_lines.append(line)
+
+        fix_prompt = (
+            f"Preflight QA found these issues on {result.url}:\n\n"
+            + "\n".join(issue_lines)
+            + "\n\nFix these issues in priority order. For each fix, explain what you changed and why."
+        )
+
+        console.print(f"\n  [bold]Copy this to your coding AI (Claude Code, Cursor, Codex):[/bold]")
+        console.print(f"  ─────────────────────────────────────────")
+        console.print(f"  {fix_prompt}")
+        console.print(f"  ─────────────────────────────────────────")
+
 
 @main.command()
 @click.argument("url")
