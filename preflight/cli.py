@@ -382,15 +382,45 @@ def check(url: str, focus: str | None, tier: str, json_out: bool, verbose: bool)
     console.print()
 
     if result.issues:
+        # Separate issues by viewport
+        mobile_issues = [i for i in result.issues if i.viewport == "mobile"]
+        desktop_issues = [i for i in result.issues if i.viewport == "desktop"]
+        both_issues = [i for i in result.issues if i.viewport not in ("mobile", "desktop")]
+
         console.print(f"  [bold]{len(result.issues)} issues found:[/bold]")
-        for issue in result.issues:
-            color = {
-                "critical": "red", "high": "red", "medium": "yellow",
-                "low": "blue", "info": "dim",
-            }.get(issue.severity, "white")
-            console.print(f"    [{color}][{issue.severity}][/{color}] {issue.title}")
-            if issue.user_impact:
-                console.print(f"      [dim]{issue.user_impact}[/dim]")
+
+        if mobile_issues:
+            console.print(f"\n  [bold]Mobile findings ({len(mobile_issues)}):[/bold]")
+            for issue in mobile_issues:
+                color = {
+                    "critical": "red", "high": "red", "medium": "yellow",
+                    "low": "blue", "info": "dim",
+                }.get(issue.severity, "white")
+                console.print(f"    [{color}][{issue.severity.upper()}][/{color}] {issue.title}")
+                if issue.user_impact:
+                    console.print(f"      [dim]{issue.user_impact}[/dim]")
+
+        if desktop_issues:
+            console.print(f"\n  [bold]Desktop findings ({len(desktop_issues)}):[/bold]")
+            for issue in desktop_issues:
+                color = {
+                    "critical": "red", "high": "red", "medium": "yellow",
+                    "low": "blue", "info": "dim",
+                }.get(issue.severity, "white")
+                console.print(f"    [{color}][{issue.severity.upper()}][/{color}] {issue.title}")
+                if issue.user_impact:
+                    console.print(f"      [dim]{issue.user_impact}[/dim]")
+
+        if both_issues:
+            console.print(f"\n  [bold]Both viewports ({len(both_issues)}):[/bold]")
+            for issue in both_issues:
+                color = {
+                    "critical": "red", "high": "red", "medium": "yellow",
+                    "low": "blue", "info": "dim",
+                }.get(issue.severity, "white")
+                console.print(f"    [{color}][{issue.severity.upper()}][/{color}] {issue.title}")
+                if issue.user_impact:
+                    console.print(f"      [dim]{issue.user_impact}[/dim]")
     else:
         console.print("  [green]No issues found[/green]")
 
@@ -405,7 +435,10 @@ def check(url: str, focus: str | None, tier: str, json_out: bool, verbose: bool)
 
         issue_lines = []
         for i, issue in enumerate(high_priority, 1):
-            line = f"{i}. [{issue.severity.upper()}] {issue.title}"
+            viewport_tag = f" (mobile)" if issue.viewport == "mobile" else (
+                f" (desktop)" if issue.viewport == "desktop" else ""
+            )
+            line = f"{i}. [{issue.severity.upper()}]{viewport_tag} {issue.title}"
             if issue.user_impact:
                 line += f" — {issue.user_impact}"
             issue_lines.append(line)
