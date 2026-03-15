@@ -33,8 +33,10 @@ from preflight.core.schemas import (
     JourneyStep,
     PageSnapshot,
     Platform,
+    ProductIntentModel,
     RunConfig,
     ScreenshotEvidence,
+    SeedInput,
     Severity,
 )
 from preflight.runners.page_snapshot import capture_snapshot, snapshot_to_prompt_context
@@ -121,6 +123,18 @@ Style: {behavioral_style}
 Evaluate this page from your persona's perspective. The screenshot is attached as an image.
 Find issues with specific evidence. Respond with JSON."""
 
+INPUT_FIRST_EVALUATION_ADDENDUM = """
+This product requires user input to function. You typed: "{seed_input}"
+
+Evaluate the results:
+- Did the product respond appropriately to this input?
+- Are the results relevant to what was typed?
+- How long did results take to appear? Was there a loading indicator?
+- Is it clear what the results mean and how to act on them?
+- If no results were found, is the empty state helpful?
+- Can the user easily modify their input and try again?
+- Does the product suggest alternatives or corrections?"""
+
 # Default max steps per journey (exploration cap)
 DEFAULT_MAX_STEPS = 8
 
@@ -146,6 +160,7 @@ class WebRunner:
         journeys: list[str],
         coverage: CoverageMap,
         max_steps: int = DEFAULT_MAX_STEPS,
+        intent_model: ProductIntentModel | None = None,
     ) -> tuple[list[Issue], CoverageMap]:
         """Run evaluation for a single persona across assigned journeys."""
         all_issues: list[Issue] = []
@@ -211,6 +226,42 @@ class WebRunner:
                 if config.credentials:
                     await self._attempt_login(page, config)
 
+                # Handle input-first products: execute seed inputs before journeys
+                is_input_first = (
+                    intent_model is not None
+                    and intent_model.input_first
+                    and persona.seed_inputs
+                )
+                if is_input_first:
+                    seed_issues = await self._execute_seed_inputs(
+                        page=page,
+                        persona=persona,
+                        config=config,
+                        console_errors=console_errors,
+                        network_error_count=network_error_count,
+                        load_time_ms=load_time_ms,
+                    )
+                    all_issues.extend(seed_issues)
+
+                    coverage.entries.append(CoverageEntry(
+                        url=page.url,
+                        screen_name=await page.title(),
+                        agent_id=persona.id,
+                        flow="seed_input_evaluation",
+                        status="visited",
+                        issues_found=len(seed_issues),
+                    ))
+
+                    # Navigate back to start for regular journeys
+                    try:
+                        await page.goto(
+                            config.target_url,
+                            wait_until="domcontentloaded",
+                            timeout=15000,
+                        )
+                    except Exception:
+                        pass
+
                 # Execute each journey with multi-step loop
                 for journey in journeys:
                     logger.info(
@@ -269,6 +320,230 @@ class WebRunner:
                 await browser.close()
 
         return all_issues, coverage
+
+    async def _execute_seed_inputs(
+        self,
+        page: Page,
+        persona: AgentPersona,
+        config: RunConfig,
+        console_errors: list[str],
+        network_error_count: int,
+        load_time_ms: int,
+    ) -> list[Issue]:
+        """Execute seed inputs for input-first products.
+
+        For each seed input: find the primary input field, type the text,
+        submit, wait for results, evaluate.
+        """
+        all_issues: list[Issue] = []
+
+        for idx, seed_input in enumerate(persona.seed_inputs):
+            logger.info(
+                "  Agent %s trying seed input %d: %s",
+                persona.name, idx + 1, seed_input.input_text[:50],
+            )
+
+            try:
+                # Find the primary input field using accessibility-based strategies
+                input_el = None
+                input_strategies = [
+                    lambda: page.get_by_role("searchbox").first,
+                    lambda: page.get_by_role("textbox").first,
+                    lambda: page.locator("textarea").first,
+                    lambda: page.locator('input[type="text"]').first,
+                    lambda: page.locator('input[type="search"]').first,
+                    lambda: page.locator("input:not([type])").first,
+                ]
+                for get_el in input_strategies:
+                    try:
+                        el = get_el()
+                        if await el.is_visible(timeout=2000):
+                            input_el = el
+                            break
+                    except Exception:
+                        continue
+
+                if input_el is None:
+                    logger.warning("No input field found for seed input")
+                    all_issues.append(Issue(
+                        title="Cannot find primary input field",
+                        severity=Severity.high,
+                        category=IssueCategory.functional,
+                        agent=persona.id,
+                        user_impact="User cannot interact with the product's main input",
+                        observed_facts=["No visible input, textarea, or searchbox found on page"],
+                        platform=Platform.web,
+                    ))
+                    break
+
+                # Clear and type the seed input
+                await input_el.clear()
+                await input_el.fill(seed_input.input_text)
+
+                # Try to submit: look for a submit button, then fall back to Enter
+                submitted = False
+                submit_strategies = [
+                    lambda: page.get_by_role("button", name="Search").first,
+                    lambda: page.get_by_role("button", name="Submit").first,
+                    lambda: page.get_by_role("button", name="Go").first,
+                    lambda: page.get_by_role("button", name="Send").first,
+                    lambda: page.locator('button[type="submit"]').first,
+                    lambda: page.locator("form button").first,
+                ]
+                for get_btn in submit_strategies:
+                    try:
+                        btn = get_btn()
+                        if await btn.is_visible(timeout=1000):
+                            await btn.click()
+                            submitted = True
+                            break
+                    except Exception:
+                        continue
+
+                if not submitted:
+                    await input_el.press("Enter")
+
+                # Wait for results to load
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    await page.wait_for_timeout(2000)  # Extra time for async results
+                except Exception:
+                    pass
+
+                # Capture and evaluate the results
+                snapshot = await capture_snapshot(
+                    page=page,
+                    output_dir=self.output_dir,
+                    snapshot_name=f"{persona.id}-seed{idx + 1:02d}",
+                    console_errors=console_errors,
+                    network_error_count=network_error_count,
+                    load_time_ms=load_time_ms if idx == 0 else 0,
+                )
+
+                step_issues = await self._judge_seed_input_result(
+                    snapshot=snapshot,
+                    persona=persona,
+                    seed_input=seed_input,
+                    step_number=idx + 1,
+                )
+                all_issues.extend(step_issues)
+
+                # Navigate back for next input
+                if idx < len(persona.seed_inputs) - 1:
+                    try:
+                        await page.goto(
+                            config.target_url,
+                            wait_until="domcontentloaded",
+                            timeout=15000,
+                        )
+                    except Exception:
+                        pass
+
+            except Exception as e:
+                logger.error("Seed input execution failed: %s", e)
+                all_issues.append(Issue(
+                    title=f"Seed input failed: {seed_input.input_text[:50]}",
+                    severity=Severity.medium,
+                    category=IssueCategory.functional,
+                    agent=persona.id,
+                    user_impact="Product may not handle user input correctly",
+                    observed_facts=[str(e)],
+                    platform=Platform.web,
+                ))
+
+        # Also test empty input submission
+        try:
+            await page.goto(
+                config.target_url,
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
+            # Find and submit empty
+            input_el = None
+            for get_el in [
+                lambda: page.get_by_role("searchbox").first,
+                lambda: page.get_by_role("textbox").first,
+                lambda: page.locator("textarea").first,
+            ]:
+                try:
+                    el = get_el()
+                    if await el.is_visible(timeout=2000):
+                        input_el = el
+                        break
+                except Exception:
+                    continue
+
+            if input_el:
+                await input_el.clear()
+                await input_el.press("Enter")
+                await page.wait_for_timeout(2000)
+                snapshot = await capture_snapshot(
+                    page=page,
+                    output_dir=self.output_dir,
+                    snapshot_name=f"{persona.id}-seed-empty",
+                    console_errors=console_errors,
+                    network_error_count=network_error_count,
+                )
+                empty_input = SeedInput(
+                    input_text="",
+                    purpose="Test empty input error handling",
+                    expected_outcome="Product should show a helpful message or validation",
+                )
+                empty_issues = await self._judge_seed_input_result(
+                    snapshot=snapshot,
+                    persona=persona,
+                    seed_input=empty_input,
+                    step_number=len(persona.seed_inputs) + 1,
+                )
+                all_issues.extend(empty_issues)
+        except Exception as e:
+            logger.debug("Empty input test failed: %s", e)
+
+        return all_issues
+
+    async def _judge_seed_input_result(
+        self,
+        snapshot: PageSnapshot,
+        persona: AgentPersona,
+        seed_input: SeedInput,
+        step_number: int,
+    ) -> list[Issue]:
+        """Evaluate results after a seed input submission."""
+        page_context = snapshot_to_prompt_context(snapshot)
+        input_addendum = INPUT_FIRST_EVALUATION_ADDENDUM.format(
+            seed_input=seed_input.input_text or "(empty input)",
+        )
+
+        prompt = EVALUATION_PROMPT_TEMPLATE.format(
+            persona_name=persona.name,
+            persona_role=persona.role,
+            persona_goals=", ".join(persona.goals),
+            patience_level=persona.patience_level,
+            expertise_level=persona.expertise_level,
+            behavioral_style=persona.behavioral_style or "standard",
+            journey="seed input evaluation",
+            step_number=step_number,
+            max_steps=len(persona.seed_inputs) + 1,
+            page_context=page_context,
+            action_description=f"Typed '{seed_input.input_text or '(empty)'}' and submitted",
+            previous_actions=[f"Typed: {seed_input.input_text or '(empty)'}"],
+        ) + input_addendum
+
+        try:
+            if snapshot.screenshot_base64:
+                screenshot_bytes = base64.b64decode(snapshot.screenshot_base64)
+                data = self.llm.complete_json_with_vision(
+                    prompt,
+                    images=[(screenshot_bytes, "image/png")],
+                    system=EVALUATION_SYSTEM_PROMPT,
+                )
+            else:
+                data = self.llm.complete_json(prompt, system=EVALUATION_SYSTEM_PROMPT)
+
+            return self._parse_issues(data, persona, snapshot, step_number)
+        except Exception as e:
+            logger.error("Seed input evaluation failed: %s", e)
+            return []
 
     async def _execute_journey(
         self,

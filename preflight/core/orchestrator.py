@@ -239,6 +239,7 @@ class Orchestrator:
                 else:
                     issues, coverage = await self.web_runner.evaluate(
                         config, agent, agent_journeys, coverage,
+                        intent_model=intent,
                     )
                 all_issues.extend(issues)
                 logger.info(
