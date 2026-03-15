@@ -28,6 +28,7 @@ class QuickIssue(BaseModel):
     category: str = "functional"
     confidence: float = 0.7
     user_impact: str = ""
+    viewport: str = "both"  # desktop | mobile | both
 
 
 class QuickCheckResult(BaseModel):
@@ -180,22 +181,54 @@ URL: {url}
 Page text (truncated):
 {content}
 
-Evaluate this page from a real user's perspective. Check BOTH desktop and mobile versions.
+Focus primarily on the MOBILE screenshot (Image 2). Most users are on phones. Desktop is secondary.
 
-For the DESKTOP version, check:
+═══════════════════════════════════════════════════════
+MOBILE EVALUATION (Image 2) — DO THIS FIRST AND IN DETAIL
+═══════════════════════════════════════════════════════
+
+Look carefully at the mobile screenshot and check ALL of the following:
+
+1. CONTENT HIDDEN BY HEADERS: Look at the TOP of the mobile screenshot. Is any page
+   content (text, cards, list items) partially hidden behind a fixed navigation bar,
+   search bar, or sticky header? If the first visible content item appears to start
+   mid-sentence or mid-element, this is a cut-off bug.
+
+2. OVERLAPPING ELEMENTS: Look at every button and interactive element. Does any element
+   OVERLAP another element? Are there any buttons, panels, filters, or UI components
+   that visually overlap each other? Elements should never stack on top of each other
+   unless it's an intentional modal with a backdrop.
+
+3. PANELS WITHOUT CLOSE BUTTONS: Are there any open panels, sidebars, filter drawers,
+   or overlays that have no visible close button (X) and no obvious way to dismiss them?
+
+4. ZOOM/SCALE ISSUES: Does the initial view show an appropriate amount of content?
+   If a map or content area appears extremely zoomed in with very little visible,
+   the default zoom is wrong for mobile. Check if the viewport shows a reasonable
+   amount of information.
+
+5. TOUCH TARGET PROBLEMS: Are any clickable elements so close together that a finger
+   tap would likely hit the wrong one? Buttons should have adequate spacing.
+
+6. HORIZONTAL OVERFLOW: Can you see a horizontal scrollbar or content extending
+   beyond the right edge of the 390px viewport?
+
+7. NAVIGATION ADAPTATION: Does the desktop nav properly collapse into a hamburger
+   menu or mobile-friendly navigation? Or is the full desktop nav crammed in?
+
+8. TEXT READABILITY: Is text readable without zooming on a phone screen?
+
+9. CONTENT VISIBILITY: Is critical information visible above the fold on mobile,
+   or is it pushed too far down?
+
+═══════════════════════════════════════════════════════
+DESKTOP EVALUATION (Image 1) — Secondary
+═══════════════════════════════════════════════════════
+
 - Visual design: alignment, spacing, sizing, hierarchy, polish
 - Functionality: do elements look clickable/interactive? Any broken layouts?
 - Trust: does this look professional and trustworthy?
 - Content: is the copy clear and helpful?
-
-For the MOBILE version, specifically check:
-- Is any content CUT OFF or hidden that's visible on desktop?
-- Are there ALIGNMENT issues or overlapping elements?
-- Are touch targets (buttons, links) large enough to tap?
-- Does the navigation adapt properly (hamburger menu, etc.)?
-- Is there unwanted HORIZONTAL SCROLLING?
-- Is text readable without zooming?
-- Is critical information visible above the fold?
 
 Respond with JSON:
 {{
@@ -203,22 +236,31 @@ Respond with JSON:
   "product_type": "saas | marketing | ecommerce | content | other",
   "input_first": false,
   "input_type": "",
-  "issues": [
+  "desktop_issues": [
     {{
       "title": "short issue title",
       "severity": "critical | high | medium | low | info",
-      "category": "functional | ux | ui | performance | trust | responsive | design",
+      "category": "functional | ux | ui | performance | trust | design",
       "confidence": 0.8,
-      "user_impact": "what the user experiences",
-      "viewport": "desktop | mobile | both"
+      "user_impact": "what the user experiences"
     }}
   ],
-  "summary": "1-2 sentence overall assessment covering both desktop and mobile",
+  "mobile_issues": [
+    {{
+      "title": "short issue title",
+      "severity": "critical | high | medium | low | info",
+      "category": "responsive | ux | ui | functional",
+      "confidence": 0.8,
+      "user_impact": "what the user experiences"
+    }}
+  ],
+  "summary": "1-2 sentence overall assessment. MUST mention mobile issues first.",
   "score": 0.75
 }}
 
-Be specific about WHICH viewport each issue affects. If something is broken on mobile but fine on desktop, say so.
-Return 0-15 issues, prioritized by severity."""
+IMPORTANT: You MUST report mobile issues separately in "mobile_issues".
+Every mobile layout problem is at least "high" severity.
+Return 0-15 issues total, prioritized by severity."""
 
     try:
         images = []
@@ -234,10 +276,35 @@ Return 0-15 issues, prioritized by severity."""
             data = llm.complete_json_with_vision(
                 vision_prompt, images=images, tier="fast"
             )
+            # Merge desktop_issues and mobile_issues into unified issues list
+            merged_issues = []
+            for raw in data.get("desktop_issues", []):
+                raw["viewport"] = "desktop"
+                merged_issues.append(raw)
+            for raw in data.get("mobile_issues", []):
+                raw["viewport"] = "mobile"
+                merged_issues.append(raw)
+            # Also include any legacy "issues" key for backwards compat
+            for raw in data.get("issues", []):
+                if raw not in merged_issues:
+                    merged_issues.append(raw)
+            data["issues"] = merged_issues
             logger.info("Vision evaluation complete, %d issues found", len(data.get("issues", [])))
         else:
             logger.warning("No screenshots captured — falling back to text-only evaluation")
             data = llm.complete_json(vision_prompt, tier="fast")
+
+        # Step 2b: Dedicated mobile detail check — second vision call on mobile only
+        if mobile_screenshot:
+            mobile_detail_issues = _run_mobile_detail_check(
+                llm, mobile_screenshot, url
+            )
+            if mobile_detail_issues:
+                data.setdefault("issues", []).extend(mobile_detail_issues)
+                logger.info(
+                    "Mobile detail check found %d additional issues",
+                    len(mobile_detail_issues),
+                )
 
     except Exception as e:
         logger.warning("Quick check LLM call failed: %s", e)
@@ -288,15 +355,21 @@ Return 0-15 issues, prioritized by severity."""
 
     elapsed = time.monotonic() - start
 
-    # Step 3: Parse into schema
+    # Step 3: Parse into schema (dedup by title)
+    seen_titles: set[str] = set()
     issues = []
     for raw_issue in data.get("issues", []):
+        title = raw_issue.get("title", "Unknown issue")
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
         issues.append(QuickIssue(
-            title=raw_issue.get("title", "Unknown issue"),
+            title=title,
             severity=raw_issue.get("severity", "medium"),
             category=raw_issue.get("category", "functional"),
             confidence=raw_issue.get("confidence", 0.7),
             user_impact=raw_issue.get("user_impact", ""),
+            viewport=raw_issue.get("viewport", "both"),
         ))
 
     return QuickCheckResult(
@@ -310,6 +383,57 @@ Return 0-15 issues, prioritized by severity."""
         score=max(0.0, min(1.0, data.get("score", 0.5))),
         duration_seconds=round(elapsed, 1),
     )
+
+
+MOBILE_DETAIL_PROMPT = """Look at this mobile screenshot (390px wide, iPhone).
+
+Check these specific issues — they are the most common mobile bugs:
+
+A. CONTENT HIDDEN BY HEADERS: Is any page content (text, cards, list items) partially hidden behind a fixed navigation bar, search bar, or sticky header at the top of the screen? If the first visible content item appears to start mid-sentence or mid-element, this is a cut-off bug.
+
+B. OVERLAPPING ELEMENTS: Are there any buttons, panels, filters, or UI components that visually overlap each other? Elements should never stack on top of each other unless it's an intentional modal.
+
+C. PANELS WITHOUT CLOSE BUTTONS: Are there any open panels, sidebars, filter drawers, or overlays that have no visible close button (X) and no obvious way to dismiss them?
+
+D. ZOOM/SCALE ISSUES: Does the initial view show an appropriate amount of content? If a map or content area appears extremely zoomed in with very little visible, the default zoom is wrong for mobile.
+
+E. TOUCH TARGET OVERLAP: Are any clickable elements so close together that a finger tap would likely hit the wrong one?
+
+F. HORIZONTAL OVERFLOW: Can you see a horizontal scrollbar or content extending beyond the right edge?
+
+For each issue found, describe EXACTLY where on the screen it is (top-left, center, behind the nav bar, etc.) and what element is affected.
+
+Respond with JSON: {"mobile_issues": [{"title": "...", "severity": "critical|high|medium|low", "category": "responsive", "confidence": 0.0-1.0, "user_impact": "..."}], "mobile_score": 0.0-1.0}"""
+
+
+def _run_mobile_detail_check(
+    llm: LLMClient,
+    mobile_screenshot: bytes,
+    url: str,
+) -> list[dict]:
+    """Run a dedicated mobile-only vision check for overlap/cutoff issues.
+
+    Returns a list of raw issue dicts with viewport='mobile'.
+    """
+    try:
+        data = llm.complete_json_with_vision(
+            MOBILE_DETAIL_PROMPT,
+            images=[(mobile_screenshot, "image/png")],
+            tier="fast",
+        )
+        issues = []
+        for raw in data.get("mobile_issues", []):
+            raw["viewport"] = "mobile"
+            # Ensure mobile layout issues are at least high severity
+            if raw.get("category") == "responsive" and raw.get("severity") in (
+                "low", "info",
+            ):
+                raw["severity"] = "medium"
+            issues.append(raw)
+        return issues
+    except Exception as e:
+        logger.warning("Mobile detail check failed for %s: %s", url, e)
+        return []
 
 
 async def _quick_check_seed_input(
