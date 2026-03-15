@@ -20,6 +20,10 @@ External-experience AI QA system. Evaluates shipped products like real users wou
 pip install -e ".[dev]"
 playwright install chromium
 
+# Quick check (~30s) — fast single-pass evaluation
+humanqa check https://your-product.com
+humanqa check https://your-product.com --focus "login flow" --json-output
+
 # Run against a URL
 humanqa run https://your-product.com
 
@@ -92,6 +96,47 @@ GITHUB_TOKEN=ghp_...        # Optional, for repo analysis and issue export
 HUMANQA_OUTPUT_DIR=./reports # Optional, default: ./artifacts
 ```
 
+## MCP Server (Claude Code / AI Tool Integration)
+
+HumanQA exposes an MCP (Model Context Protocol) server so AI coding tools like Claude Code can use it as a tool.
+
+### Setup
+
+Add to your Claude Code MCP configuration (`~/.claude/claude_desktop_config.json` or project `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "humanqa": {
+      "command": "humanqa-mcp",
+      "env": {
+        "GEMINI_API_KEY": "your-gemini-key"
+      }
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description | Speed |
+|------|-------------|-------|
+| `humanqa_quick_check` | Fast single-pass evaluation | ~30s |
+| `humanqa_evaluate` | Full multi-agent QA pipeline | 2-5 min |
+| `humanqa_get_report` | Retrieve existing reports | Instant |
+| `humanqa_compare` | Compare runs for regressions | Instant |
+
+### Usage in Claude Code
+
+```
+"Quick check my staging site at https://staging.myapp.com"
+"Run a full evaluation on https://myapp.com with repo https://github.com/org/myapp"
+"Show me the HumanQA report from the last run"
+"Compare the current run against ./baseline for regressions"
+```
+
+See [HUMANQA_SKILL.md](HUMANQA_SKILL.md) for the full integration guide.
+
 ## Architecture
 
 ```
@@ -106,8 +151,9 @@ humanqa/
 │   ├── repo_analyzer.py     # GitHub repo analysis (visibility, tech stack, routes)
 │   ├── schemas.py           # All data models (issues, groups, evidence, agents)
 │   ├── actions.py           # Deterministic browser action engine
+│   ├── quick_check.py       # Fast single-pass evaluation for MCP/CI
 │   ├── progress.py          # Visual progress tracker
-│   └── llm.py               # LLM abstraction (Anthropic / OpenAI)
+│   └── llm.py               # LLM abstraction (Anthropic / OpenAI / Gemini)
 ├── runners/
 │   ├── web_runner.py        # Playwright-based web evaluation (desktop + mobile)
 │   ├── mobile_runner.py     # Mobile web emulation / Maestro native app testing
@@ -126,6 +172,7 @@ humanqa/
 │   ├── webhook.py           # Slack/webhook notifications
 │   └── templates/
 │       └── report.html      # Interactive HTML report template
+├── mcp_server.py            # MCP server (Claude Code / AI tool integration)
 └── scheduling/
     └── scheduler.py         # Cron-based scheduled runs
 ```
