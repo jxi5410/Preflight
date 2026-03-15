@@ -1,8 +1,10 @@
 """Tests for the self-learning product memory system."""
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,6 +13,17 @@ from preflight.core.memory import (
     ProductMemory,
     ProductMemoryData,
     RunFeedback,
+)
+from preflight.core.schemas import (
+    AgentPersona,
+    CoverageMap,
+    Issue,
+    IssueCategory,
+    Platform,
+    ProductIntentModel,
+    RunConfig,
+    RunResult,
+    Severity,
 )
 
 
@@ -244,3 +257,168 @@ class TestProductMemory:
             data = mem.load("https://example.com")
             assert data.url == "https://example.com"
             assert data.run_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Integration: Memory context injected into persona generator
+# ---------------------------------------------------------------------------
+
+
+class TestPersonaGeneratorWithMemory:
+    """Verify persona generator receives and uses memory context."""
+
+    def test_memory_context_appended_to_prompt(self):
+        from preflight.core.persona_generator import PersonaGenerator
+
+        mock_llm = MagicMock()
+        mock_llm.complete_json.return_value = [
+            {
+                "name": "Alex",
+                "role": "User",
+                "persona_type": "first_time_user",
+                "goals": ["Sign up"],
+                "expectations": ["Works"],
+                "patience_level": "moderate",
+                "expertise_level": "novice",
+                "behavioral_style": "Cautious",
+                "device_preference": "mobile_web",
+            },
+        ]
+
+        gen = PersonaGenerator(llm=mock_llm)
+        config = RunConfig(target_url="https://example.com")
+        intent = ProductIntentModel(
+            product_name="TestApp",
+            product_type="SaaS",
+            target_audience=["devs"],
+            primary_jobs=["manage"],
+            critical_journeys=["onboard"],
+        )
+
+        memory_ctx = 'KNOWN FALSE POSITIVES — Do NOT report: "Nav is confusing"'
+
+        personas = asyncio.get_event_loop().run_until_complete(
+            gen.generate_personas(intent, config, memory_context=memory_ctx)
+        )
+
+        # Verify the prompt sent to LLM included memory context
+        call_args = mock_llm.complete_json.call_args
+        prompt = call_args[0][0]  # First positional arg
+        assert "KNOWN FALSE POSITIVES" in prompt
+        assert "Nav is confusing" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Integration: WebRunner uses memory context in system prompt
+# ---------------------------------------------------------------------------
+
+
+class TestWebRunnerMemoryContext:
+    """Verify WebRunner injects memory into evaluation system prompt."""
+
+    def test_memory_context_stored(self):
+        from preflight.runners.web_runner import WebRunner
+
+        mock_llm = MagicMock()
+        runner = WebRunner(
+            llm=mock_llm,
+            output_dir="/tmp/test-artifacts",
+            memory_context="Do NOT report: 'Colors look off'",
+        )
+
+        assert runner.memory_context == "Do NOT report: 'Colors look off'"
+
+    def test_no_memory_context_by_default(self):
+        from preflight.runners.web_runner import WebRunner
+
+        mock_llm = MagicMock()
+        runner = WebRunner(llm=mock_llm, output_dir="/tmp/test-artifacts")
+
+        assert runner.memory_context == ""
+
+
+# ---------------------------------------------------------------------------
+# Integration: Report generator includes learning context
+# ---------------------------------------------------------------------------
+
+
+class TestReportGeneratorMemoryContext:
+    """Verify report includes learning context section."""
+
+    def test_markdown_includes_learning_context(self):
+        from preflight.reporting.report_generator import ReportGenerator
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gen = ReportGenerator(output_dir=tmpdir)
+
+            result = RunResult(
+                config=RunConfig(target_url="https://example.com"),
+                intent_model=ProductIntentModel(
+                    product_name="TestApp",
+                    product_type="SaaS",
+                    target_audience=["developers"],
+                ),
+                issues=[
+                    Issue(title="Bug", severity=Severity.medium),
+                ],
+            )
+
+            path = gen.generate_markdown(
+                result,
+                memory_context="3 prior runs, 2 known false positives",
+            )
+
+            report_text = Path(path).read_text()
+            assert "Learning Context" in report_text
+            assert "prior runs" in report_text
+
+    def test_markdown_no_learning_context_when_empty(self):
+        from preflight.reporting.report_generator import ReportGenerator
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gen = ReportGenerator(output_dir=tmpdir)
+
+            result = RunResult(
+                config=RunConfig(target_url="https://example.com"),
+                intent_model=ProductIntentModel(
+                    product_name="TestApp",
+                    product_type="SaaS",
+                    target_audience=["developers"],
+                ),
+                issues=[],
+            )
+
+            path = gen.generate_markdown(result)
+
+            report_text = Path(path).read_text()
+            assert "Learning Context" not in report_text
+
+
+# ---------------------------------------------------------------------------
+# Integration: False positive filtering
+# ---------------------------------------------------------------------------
+
+
+class TestFalsePositiveFiltering:
+    """Verify that known false positives are filtered from results."""
+
+    def test_false_positives_filtered_by_title(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mem = ProductMemory(base_dir=tmpdir)
+            data = mem.load("https://example.com")
+            data.known_false_positives = ["Nav is confusing", "Colors look off"]
+
+            issues = [
+                Issue(title="Nav is confusing", severity=Severity.medium),
+                Issue(title="Broken button", severity=Severity.high),
+                Issue(title="Colors look off", severity=Severity.low),
+                Issue(title="Missing form validation", severity=Severity.high),
+            ]
+
+            fp_titles = mem.get_false_positive_titles(data)
+            filtered = [i for i in issues if i.title not in fp_titles]
+
+            assert len(filtered) == 2
+            assert all(i.title not in fp_titles for i in filtered)
+            assert filtered[0].title == "Broken button"
+            assert filtered[1].title == "Missing form validation"
