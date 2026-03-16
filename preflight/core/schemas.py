@@ -202,6 +202,27 @@ class AgentPersona(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# First Impression
+# ---------------------------------------------------------------------------
+
+class FirstImpressionResult(BaseModel):
+    """Result of a persona's first-impression evaluation of the landing page."""
+    persona_id: str
+    clarity_score: int = Field(ge=0, le=10)
+    clarity_explanation: str
+    trust_score: int = Field(ge=0, le=10)
+    trust_signals_found: list[str] = Field(default_factory=list)
+    trust_signals_missing: list[str] = Field(default_factory=list)
+    cta_score: int = Field(ge=0, le=10)
+    cta_explanation: str
+    relevance_score: int = Field(ge=0, le=10)
+    relevance_explanation: str
+    gut_reaction: str  # First-person narrative from the persona
+    would_continue: bool  # Would this persona stick around or bounce?
+    time_to_understand_seconds: int  # Estimated seconds to understand the product
+
+
+# ---------------------------------------------------------------------------
 # Actions (deterministic interaction engine)
 # ---------------------------------------------------------------------------
 
@@ -441,3 +462,4 @@ class RunResult(BaseModel):
     coverage: CoverageMap = Field(default_factory=CoverageMap)
     summary: str = ""
     scores: dict[str, float] = Field(default_factory=dict)
+    first_impressions: list[FirstImpressionResult] = Field(default_factory=list)

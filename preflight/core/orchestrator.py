@@ -19,6 +19,7 @@ from preflight.core.performance import (
 from preflight.core.schemas import (
     AgentPersona,
     CoverageMap,
+    FirstImpressionResult,
     Issue,
     IssueCategory,
     IssueGroup,
@@ -29,6 +30,7 @@ from preflight.core.schemas import (
     RunResult,
     Severity,
 )
+from preflight.lenses.first_impression_lens import FirstImpressionLens
 from preflight.runners.web_runner import WebRunner
 from preflight.runners.mobile_runner import MobileRunner
 
@@ -202,6 +204,7 @@ class Orchestrator:
         self.output_dir = output_dir
         self.web_runner = WebRunner(llm, output_dir)
         self.mobile_runner = MobileRunner(llm, output_dir)
+        self.first_impression_lens = FirstImpressionLens(llm)
         self._collected_snapshots: list[PageSnapshot] = []
 
     async def run(
@@ -221,9 +224,28 @@ class Orchestrator:
         # Step 1: Assign journeys to agents
         assignments = await self._assign_journeys(intent, agents)
 
-        # Step 2: Run web evaluations
+        # Step 2: First-impression evaluation (runs BEFORE journeys)
+        first_impressions: list[FirstImpressionResult] = []
+        try:
+            landing_snapshot = await self._capture_landing_snapshot(config)
+            if landing_snapshot:
+                for agent in agents:
+                    fi_result = await self.first_impression_lens.evaluate(
+                        persona=agent, intent=intent, snapshot=landing_snapshot,
+                    )
+                    first_impressions.append(fi_result)
+                result.first_impressions = first_impressions
+        except Exception as e:
+            logger.warning("First-impression evaluation failed: %s", e)
+
+        # Step 3: Run web evaluations
         coverage = CoverageMap()
         all_issues: list[Issue] = []
+
+        # Convert first-impression results to issues
+        if first_impressions:
+            fi_issues = self.first_impression_lens.results_to_issues(first_impressions)
+            all_issues.extend(fi_issues)
 
         # Run agents sequentially to avoid overwhelming the target
         # (parallel option available but sequential is safer default)
@@ -253,7 +275,7 @@ class Orchestrator:
                 )
                 all_issues.extend(issues)
 
-        # Step 3: Run at least one mobile critical path if not already covered
+        # Step 4: Run at least one mobile critical path if not already covered
         mobile_covered = any(
             a.device_preference in (Platform.mobile_web, Platform.mobile_app)
             for a in agents
@@ -265,25 +287,25 @@ class Orchestrator:
             )
             all_issues.extend(mobile_issues)
 
-        # Step 4: Evaluate performance budgets from collected snapshots
+        # Step 5: Evaluate performance budgets from collected snapshots
         perf_issues, perf_scores = self._evaluate_performance(
             self._collected_snapshots, intent.product_type,
         )
         all_issues.extend(perf_issues)
 
-        # Step 5: Compute error signatures for dedup
+        # Step 6: Compute error signatures for dedup
         for issue in all_issues:
             if not issue.error_signature:
                 issue.error_signature = compute_error_signature(issue)
 
-        # Step 6: Deduplicate
+        # Step 7: Deduplicate
         deduped = self._deduplicate_issues(all_issues)
 
-        # Step 7: Comparative evaluation across personas
+        # Step 8: Comparative evaluation across personas
         comparative_issues = self._comparative_evaluation(deduped, agents, coverage)
         deduped.extend(comparative_issues)
 
-        # Step 8: Rank by severity and confidence
+        # Step 9: Rank by severity and confidence
         ranked = sorted(
             deduped,
             key=lambda i: (
@@ -292,7 +314,7 @@ class Orchestrator:
             ),
         )
 
-        # Step 9: Group related issues
+        # Step 10: Group related issues
         issue_groups = group_issues(ranked)
 
         result.issues = ranked
@@ -456,6 +478,35 @@ class Orchestrator:
         )
 
         return comparative_issues
+
+    async def _capture_landing_snapshot(self, config: RunConfig) -> PageSnapshot | None:
+        """Capture a snapshot of the landing page for first-impression evaluation."""
+        try:
+            from playwright.async_api import async_playwright
+            from preflight.runners.page_snapshot import capture_snapshot
+            from pathlib import Path
+
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                try:
+                    await page.goto(
+                        config.target_url,
+                        wait_until="domcontentloaded",
+                        timeout=20000,
+                    )
+                    await page.wait_for_timeout(2000)
+                    snapshot = await capture_snapshot(
+                        page=page,
+                        output_dir=Path(self.output_dir),
+                        snapshot_name="landing-page",
+                    )
+                    return snapshot
+                finally:
+                    await browser.close()
+        except Exception as e:
+            logger.warning("Failed to capture landing snapshot: %s", e)
+            return None
 
     def add_snapshots(self, snapshots: list[PageSnapshot]) -> None:
         """Register snapshots collected during evaluation for performance analysis."""
