@@ -238,6 +238,29 @@ class ReportGenerator:
                     lines.append(f"**Comparison:** {verdict.comparison_note}")
                     lines.append("")
 
+        # Claims vs. Reality
+        if result.intent_reality_gaps:
+            lines.append("## Claims vs. Reality")
+            lines.append("")
+            lines.append("| Source | Claim | Reality | Severity | Found By |")
+            lines.append("|--------|-------|---------|----------|----------|")
+            for gap in result.intent_reality_gaps:
+                lines.append(
+                    f"| {gap.claim_source} | {gap.claim_text[:60]} | "
+                    f"{gap.reality[:60]} | {gap.severity} | "
+                    f"{gap.persona_who_found_it} |"
+                )
+            lines.append("")
+
+            for gap in result.intent_reality_gaps:
+                if gap.severity == "critical":
+                    lines.append(f"**CRITICAL GAP:** {gap.claim_text}")
+                    lines.append(f"- **Claimed ({gap.claim_source}):** {gap.claim_text}")
+                    lines.append(f"- **Reality:** {gap.reality}")
+                    if gap.evidence_screenshot:
+                        lines.append(f"- ![evidence]({gap.evidence_screenshot})")
+                    lines.append("")
+
         # Institutional readiness (if applicable)
         inst_issues = [i for i in issues if i.category.value == "institutional_trust"]
         if inst_issues or result.scores.get("institutional_readiness") is not None:

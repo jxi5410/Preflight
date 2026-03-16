@@ -475,6 +475,16 @@ class Handoff(BaseModel):
     summary: str = ""
 
 
+class IntentRealityGap(BaseModel):
+    """A gap between what the product claims and what users actually experienced."""
+    claim_source: str  # "README", "landing page", "docs"
+    claim_text: str  # What was claimed: "One-click export"
+    reality: str  # What actually happened: "Export required 4 steps and a settings change"
+    severity: str  # "critical", "notable", "minor"
+    evidence_screenshot: str | None = None
+    persona_who_found_it: str
+
+
 class RetentionVerdict(BaseModel):
     """A persona's verdict on whether they would return to this product."""
     persona_id: str
@@ -504,3 +514,4 @@ class RunResult(BaseModel):
     scores: dict[str, float] = Field(default_factory=dict)
     first_impressions: list[FirstImpressionResult] = Field(default_factory=list)
     retention_verdicts: list[RetentionVerdict] = Field(default_factory=list)
+    intent_reality_gaps: list[IntentRealityGap] = Field(default_factory=list)

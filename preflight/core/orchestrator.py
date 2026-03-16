@@ -20,6 +20,7 @@ from preflight.core.schemas import (
     AgentPersona,
     CoverageMap,
     FirstImpressionResult,
+    IntentRealityGap,
     Issue,
     IssueCategory,
     IssueGroup,
@@ -161,6 +162,43 @@ RETENTION_PROMPT = """You are {persona_name}, a {persona_role}.
 
 Now give your final verdict: would you come back to this product? Would you recommend it?
 Be honest and specific. Speak in first person as {persona_name}."""
+
+INTENT_REALITY_SYSTEM_PROMPT = """You are the claims-vs-reality analyst for Preflight.
+
+Your job is to compare what a product CLAIMS to do (from README, docs, marketing copy, landing page)
+against what users ACTUALLY experienced during evaluation.
+
+For each gap, provide:
+- claim_source: Where the claim was found
+- claim_text: The exact or paraphrased claim
+- reality: What actually happened during evaluation
+- severity: "critical" (feature doesn't work at all), "notable" (partially works or misleading), "minor" (cosmetic or wording difference)
+- persona_who_found_it: Which persona discovered the gap
+
+Respond with JSON: {"gaps": [...], "summary": "Overall assessment of claims accuracy"}"""
+
+INTENT_REALITY_PROMPT = """Compare the product's claims against what personas actually experienced.
+
+## Product Claims (from Intent Model)
+- Product: {product_name} ({product_type})
+- Claimed features: {claimed_features}
+- Target audience: {target_audience}
+- Primary jobs: {primary_jobs}
+- Feature expectations: {feature_expectations}
+
+## Repository Claims (if available)
+{repo_claims}
+
+## What Personas Actually Experienced
+{experience_summary}
+
+## Issues Found During Evaluation
+{issues_summary}
+
+## Retention Verdicts
+{retention_summary}
+
+Identify any gaps between what was claimed and what was experienced. Be specific."""
 
 JOURNEY_ASSIGNMENT_PROMPT = """You are the test planner for Preflight.
 
@@ -369,6 +407,10 @@ class Orchestrator:
         retention_verdicts = await self._evaluate_retention(agents, result)
         result.retention_verdicts = retention_verdicts
 
+        # Step 12: Intent-vs-reality gap detection
+        gaps = await self._detect_intent_reality_gaps(intent, agents, result)
+        result.intent_reality_gaps = gaps
+
         result.completed_at = datetime.now(tz=__import__("datetime").timezone.utc)
 
         return result
@@ -526,6 +568,84 @@ class Orchestrator:
         )
 
         return comparative_issues
+
+    async def _detect_intent_reality_gaps(
+        self,
+        intent: ProductIntentModel,
+        agents: list[AgentPersona],
+        result: RunResult,
+    ) -> list[IntentRealityGap]:
+        """Cross-reference product claims against actual persona experiences."""
+        # Build claimed features text
+        claimed_features = ", ".join(intent.primary_jobs) if intent.primary_jobs else "(none)"
+        feature_expectations = "\n".join(
+            f"- {fe.feature_name} (source: {fe.source})"
+            for fe in intent.feature_expectations
+        ) if intent.feature_expectations else "(none)"
+
+        # Build repo claims
+        repo_claims = "(no repository data)"
+        if intent.repo_insights:
+            parts = []
+            if intent.repo_insights.claimed_features:
+                parts.append("Claimed features: " + ", ".join(intent.repo_insights.claimed_features))
+            if intent.repo_insights.description:
+                parts.append(f"Description: {intent.repo_insights.description}")
+            repo_claims = "\n".join(parts) if parts else "(no claims)"
+
+        # Build experience summary from think-aloud transcripts
+        experience_parts = []
+        for agent in agents:
+            steps_text = []
+            for step in agent.journey_steps[:5]:
+                if step.think_aloud:
+                    steps_text.append(f"  Step {step.step_number}: {step.think_aloud[:150]}")
+            if steps_text:
+                experience_parts.append(f"{agent.name} ({agent.persona_type}):\n" + "\n".join(steps_text))
+        experience_summary = "\n\n".join(experience_parts) if experience_parts else "(no experience data)"
+
+        # Build issues summary
+        issues_summary = "\n".join(
+            f"- [{i.severity.value}] {i.title} (agent: {i.agent})"
+            for i in result.issues[:20]
+        ) if result.issues else "(no issues)"
+
+        # Build retention summary
+        retention_summary = "\n".join(
+            f"- {v.persona_id}: {'would use again' if v.would_use_again else 'would NOT use again'} — {v.primary_reason}"
+            for v in result.retention_verdicts
+        ) if result.retention_verdicts else "(no verdicts)"
+
+        prompt = INTENT_REALITY_PROMPT.format(
+            product_name=intent.product_name,
+            product_type=intent.product_type,
+            claimed_features=claimed_features,
+            target_audience=", ".join(intent.target_audience),
+            primary_jobs=", ".join(intent.primary_jobs),
+            feature_expectations=feature_expectations,
+            repo_claims=repo_claims,
+            experience_summary=experience_summary[:3000],
+            issues_summary=issues_summary[:2000],
+            retention_summary=retention_summary,
+        )
+
+        try:
+            data = self.llm.complete_json(prompt, system=INTENT_REALITY_SYSTEM_PROMPT, tier="fast")
+            gaps: list[IntentRealityGap] = []
+            for gap_data in data.get("gaps", []):
+                gaps.append(IntentRealityGap(
+                    claim_source=gap_data.get("claim_source", "unknown"),
+                    claim_text=gap_data.get("claim_text", ""),
+                    reality=gap_data.get("reality", ""),
+                    severity=gap_data.get("severity", "minor"),
+                    evidence_screenshot=gap_data.get("evidence_screenshot"),
+                    persona_who_found_it=gap_data.get("persona_who_found_it", ""),
+                ))
+            logger.info("Intent-reality gap detection: %d gaps found", len(gaps))
+            return gaps
+        except Exception as e:
+            logger.warning("Intent-reality gap detection failed: %s", e)
+            return []
 
     async def _evaluate_retention(
         self,
