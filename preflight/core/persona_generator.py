@@ -11,6 +11,7 @@ import logging
 from preflight.core.llm import LLMClient
 from preflight.core.schemas import (
     AgentPersona,
+    EmotionalState,
     Platform,
     ProductIntentModel,
     RunConfig,
@@ -63,6 +64,64 @@ For each persona, provide:
 - device_preference: "web" | "mobile_web" | "mobile_app"
 
 Respond with a JSON array of persona objects."""
+
+
+def compute_emotional_baseline(persona: AgentPersona) -> EmotionalState:
+    """Infer starting emotional state from persona attributes.
+
+    Different persona types start with different emotional baselines:
+    - First-time non-technical users: low confidence, neutral trust, high engagement
+    - Power users: high confidence, moderate trust, moderate engagement
+    - Skeptical buyers: high confidence, low trust, low engagement
+    """
+    p_type = persona.persona_type.lower()
+    expertise = persona.expertise_level.lower()
+    patience = persona.patience_level.lower()
+
+    # Default baseline
+    confidence = 0.7
+    frustration = 0.0
+    trust = 0.5
+    engagement = 0.7
+    delight = 0.0
+
+    # Adjust by persona type
+    if "first_time" in p_type or "new" in p_type:
+        confidence = 0.4
+        trust = 0.5
+        engagement = 0.8
+    elif "power" in p_type or "advanced" in p_type:
+        confidence = 0.9
+        trust = 0.6
+        engagement = 0.5
+    elif "skeptic" in p_type or "buyer" in p_type or "evaluator" in p_type:
+        confidence = 0.8
+        trust = 0.3
+        engagement = 0.4
+    elif "compliance" in p_type or "risk" in p_type or "institutional" in p_type:
+        confidence = 0.8
+        trust = 0.3
+        engagement = 0.5
+
+    # Adjust by expertise
+    if expertise == "novice":
+        confidence = min(confidence, 0.4)
+    elif expertise == "expert":
+        confidence = max(confidence, 0.8)
+
+    # Adjust by patience
+    if patience == "low":
+        engagement = min(engagement, 0.5)
+    elif patience == "high":
+        engagement = max(engagement, 0.7)
+
+    return EmotionalState(
+        confidence=confidence,
+        frustration=frustration,
+        trust=trust,
+        engagement=engagement,
+        delight=delight,
+    )
 
 
 class PersonaGenerator:
@@ -120,6 +179,10 @@ class PersonaGenerator:
                 # Promote the last persona to mobile_web
                 personas[-1].device_preference = Platform.mobile_web
                 logger.info("Promoted persona '%s' to mobile_web to ensure mobile coverage", personas[-1].name)
+
+            # Apply emotional baselines
+            for p in personas:
+                p.emotional_state = compute_emotional_baseline(p)
 
             logger.info("Generated %d personas", len(personas))
             return personas

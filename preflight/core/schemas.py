@@ -134,6 +134,29 @@ class ProductIntentModel(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Emotional State
+# ---------------------------------------------------------------------------
+
+class EmotionalState(BaseModel):
+    """Tracks a persona's emotional state during a session."""
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0, description="How confident the persona feels about what to do next")
+    frustration: float = Field(default=0.0, ge=0.0, le=1.0, description="Accumulated frustration from confusion, errors, dead ends")
+    trust: float = Field(default=0.5, ge=0.0, le=1.0, description="How much the persona trusts this product")
+    engagement: float = Field(default=0.7, ge=0.0, le=1.0, description="How interested/invested the persona is in continuing")
+    delight: float = Field(default=0.0, ge=0.0, le=1.0, description="Positive surprise or satisfaction moments")
+
+
+class EmotionalEvent(BaseModel):
+    """A moment where the persona's emotional state shifted."""
+    step_index: int
+    trigger: str  # What caused the shift (e.g., "confusing label", "fast load time", "error message")
+    dimension: str  # Which emotion changed (confidence, frustration, trust, engagement, delight)
+    old_value: float
+    new_value: float
+    persona_thought: str  # What the persona "thought" at this moment, in first person
+
+
+# ---------------------------------------------------------------------------
 # Agent / Persona
 # ---------------------------------------------------------------------------
 
@@ -159,6 +182,8 @@ class AgentPersona(BaseModel):
     device_preference: Platform = Platform.web
     assigned_journeys: list[str] = Field(default_factory=list)
     seed_inputs: list[SeedInput] = Field(default_factory=list)
+    emotional_state: EmotionalState = Field(default_factory=EmotionalState)
+    emotional_timeline: list[EmotionalEvent] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
